@@ -112,7 +112,7 @@ namespace Yukar.Battle
 
                 // 暫定的に名前引きする
                 // provisionally named
-                main = LoadLayout(Rom.LayoutProperties.LayoutNode.UsageInGame.BattleMain);
+                main = LoadLayout(Rom.LayoutProperties.LayoutNode.UsageInGame.BattleStatus);
                 main.Enabled = false;
                 main.AutoInputHandling = false;
                 command = LoadLayout(Rom.LayoutProperties.LayoutNode.UsageInGame.BattleCommand);
@@ -381,13 +381,20 @@ namespace Yukar.Battle
                             {
                                 index = renderContainer.MenuIndex;
                             }
-                            if(index < 0)
+                            if (index < 0)
                             {
                                 index = 0;
                             }
                             var res = positionProvider(item.positionAnchorTag, index);
                             if (res != null)
-                                obj.Position = res.Value;
+                            {
+                                var pos = res.Value;
+                                if (item.positionAnchorTag == "Enemy" || item.positionAnchorTag == "Player")
+                                {
+                                    pos += item.pos;
+                                }
+                                obj.Position = pos;
+                            }
                         }
                     }
                 }
@@ -410,6 +417,10 @@ namespace Yukar.Battle
                         {
                             obj.SkipUpdateVisibleFromParent = true;
                             var pos = positionProvider(item.positionAnchorTag, item.containerIndex);
+                            if (item.positionAnchorTag == "Enemy" || item.positionAnchorTag == "Player")
+                            {
+                                pos += item.pos;
+                            }
                             if (pos.X >= 5000)
                             {
                                 if (obj.IsVisible && !obj.IsInOutAnimating)
@@ -493,9 +504,9 @@ namespace Yukar.Battle
                         message.finalize();
                         message = LoadLayout(Rom.LayoutProperties.LayoutNode.UsageInGame.BattleMessage);
                         break;
-                    case Rom.LayoutProperties.LayoutNode.UsageInGame.BattleMain:
+                    case Rom.LayoutProperties.LayoutNode.UsageInGame.BattleStatus:
                         main.finalize();
-                        main = LoadLayout(Rom.LayoutProperties.LayoutNode.UsageInGame.BattleMain);
+                        main = LoadLayout(Rom.LayoutProperties.LayoutNode.UsageInGame.BattleStatus);
                         main.Enabled = false;
                         main.AutoInputHandling = false;
                         break;
@@ -625,6 +636,9 @@ namespace Yukar.Battle
 
         internal override void ReleaseResourceData()
         {
+            if (statusWindow == null)
+                return;
+
             Graphics.UnloadImage(statusWindow.WindowResource);
             Graphics.UnloadImage(commandWindow.WindowResource);
 
@@ -860,7 +874,7 @@ namespace Yukar.Battle
                     {
                         updateGameContent = true;
                     }
-                    else if(ui.main.ChoiceItemData.Value.number != choice.number)
+                    else if (ui.main.ChoiceItemData.Value.number != choice.number)
                     {
                         updateGameContent = true;
                     }
@@ -900,9 +914,9 @@ namespace Yukar.Battle
 
                 if (tag == "Enemy")
                 {
-                    if (index >= 0 && index < owner.enemyData.Count && owner.enemyData[index] != null)
+                    if (index >= 0 && index < enemyMonsterData.Count && enemyMonsterData[index] != null)
                     {
-                        var actor = enemies.FirstOrDefault(x => x.source == owner.enemyData[index]);
+                        var actor = enemies.FirstOrDefault(x => x.source == enemyMonsterData[index]);
                         if (actor != null)
                             return actor.getScreenPos(p, v, MapScene.EffectPosType.Ground);
                     }
@@ -910,7 +924,7 @@ namespace Yukar.Battle
                 }
                 else if (tag == "Player")
                 {
-                    if (index >= 0 &&  playerData.Count > index)
+                    if (index >= 0 && playerData.Count > index)
                     {
                         var pl = playerData[index];
                         foreach (var f in friends)
@@ -1207,7 +1221,7 @@ namespace Yukar.Battle
                     {
                         // レイアウト側にダメージポジションの指定があればそこにポップする
                         // If there is a damage position specified on the layout side, pop it there
-                        var targetLayoutNode = ui.main.GetAnchorNode(AbstractRenderObject.PositionAnchorTags.DamagePosition, owner.playerData.IndexOf((BattlePlayerData)target));
+                        var targetLayoutNode = ui.main.GetAnchorNode(AbstractRenderObject.PositionAnchorTags.DamagePosition, owner.PlayerViewDataList.IndexOf(target as BattlePlayerData));
                         if (targetLayoutNode != null)
                         {
                             var pos = targetLayoutNode.GetOriginPosition();
@@ -1255,8 +1269,9 @@ namespace Yukar.Battle
                     {
                         defeatEffectDrawer.draw((int)target.EffectPosition.X, (int)target.EffectPosition.Y, false);
                         var actor = searchFromActors(target);
-                        if (defeatEffectDrawer.drawFor3D(skillUser?.mapChr, actor?.mapChr, defeatEffectDrawTargetList.Count, rot.Y))
-                            actor?.queueActorState(BattleActor.ActorStateType.KO);
+                        defeatEffectDrawer.drawFor3D(skillUser?.mapChr, actor?.mapChr, defeatEffectDrawTargetList.Count, rot.Y);
+                        //if (defeatEffectDrawer.drawFor3D(skillUser?.mapChr, actor?.mapChr, defeatEffectDrawTargetList.Count, rot.Y))
+                        //    actor?.queueActorState(BattleActor.ActorStateType.KO);
                     }
                 }
             }
@@ -1469,8 +1484,12 @@ namespace Yukar.Battle
 
             // レイアウト側にダメージポジションの指定があればその色を変える
             // If there is a damage position specified on the layout side, change the color
-            var targetLayoutNode = ui.main.GetAnchorNode(AbstractRenderObject.PositionAnchorTags.DamagePosition, owner.playerData.IndexOf(player));
-            if (targetLayoutNode?.Parent?.Parent != null)
+            var index = owner.PlayerViewDataList.IndexOf(player);
+            var targetLayoutNode = ui.main.GetAnchorNode(AbstractRenderObject.PositionAnchorTags.DamagePosition, index);
+            while (targetLayoutNode?.Parent != null && targetLayoutNode.Parent.MenuIndex == index)
+                targetLayoutNode = targetLayoutNode.Parent;
+
+            if (targetLayoutNode != null)
             {
                 Action<AbstractRenderObject> setColorImpl = null;
                 setColorImpl = (x) =>
@@ -1483,7 +1502,7 @@ namespace Yukar.Battle
                         setColorImpl(child);
                     }
                 };
-                setColorImpl(targetLayoutNode?.Parent?.Parent);
+                setColorImpl(targetLayoutNode);
             }
         }
 
@@ -1626,7 +1645,7 @@ namespace Yukar.Battle
                     // If there is a damage position specified on the layout side, pop it there
                     if (info.targetCharacter is BattlePlayerData)
                     {
-                        var targetLayoutNode = ui.main.GetAnchorNode(AbstractRenderObject.PositionAnchorTags.DamagePosition, playerData.IndexOf((BattlePlayerData)info.targetCharacter));
+                        var targetLayoutNode = ui.main.GetAnchorNode(AbstractRenderObject.PositionAnchorTags.DamagePosition, owner.PlayerViewDataList.IndexOf(info.targetCharacter as BattlePlayerData));
                         if (targetLayoutNode != null)
                         {
                             var tgt = targetLayoutNode.Parent;
@@ -1634,21 +1653,21 @@ namespace Yukar.Battle
                             {
                                 tgt = tgt.Parent;
                             }
-                            if (tgt != null && (info.type == BattleDamageTextInfo.TextType.HitPointDamage || info.type == BattleDamageTextInfo.TextType.CriticalDamage))
+                            if (tgt is MenuSubContainer && (info.type == BattleDamageTextInfo.TextType.HitPointDamage || info.type == BattleDamageTextInfo.TextType.CriticalDamage))
                             {
                                 // コンテナを揺らす処理
                                 // Processing to shake the container
                                 float amount = info.textInfo[0].timer / 5 + 0.5f;
                                 amount = Math.Max(amount, 0.0f);
-                                amount = Math.Min(amount, 4.0f);
+                                amount = Math.Min(amount, 4.5f);
                                 var duration = amount % 2;
                                 if (duration > 1)
                                     duration = 2 - duration;
                                 duration -= 0.5f;
 
-                                var pos = tgt.MenuItem.pos;
-                                tgt.Position = pos;
                                 basePosition = targetLayoutNode.GetOriginPosition();
+
+                                var pos = ((MenuSubContainer)tgt).GetDefaultDrawPosition();
                                 pos.X += duration * 16;
                                 tgt.Position = pos;
                             }
@@ -1815,7 +1834,12 @@ namespace Yukar.Battle
                 // 味方の死亡エフェクト
                 // Ally death effect
                 if ((state != prevState || option != prevOption) &&
-                    (state == BattleActor.ActorStateType.KO || state == BattleActor.ActorStateType.FATAL_DAMAGE) &&
+                    // FATAL_DAMAGE か KO のときに出すが、直前のStateがFATAL_DAMAGEだった場合はすでに表示済みのため、KOでは出さない
+                    // It will be issued when FATAL_DAMAGE or KO occurs, but if the previous state was FATAL_DAMAGE, it will not be issued when KO occurs because it has already been displayed.
+                    ((state == BattleActor.ActorStateType.KO && prevState != BattleActor.ActorStateType.FATAL_DAMAGE) || state == BattleActor.ActorStateType.FATAL_DAMAGE) &&
+                    // 逃げたあとに再表示されることがある
+                    // May reappear after escaping
+                    prevState != BattleActor.ActorStateType.ESCAPE &&
                     source.IsDeadCondition() && inIsFriend)
                 {
                     if (source.DeathEffect != Guid.Empty)
@@ -2182,7 +2206,8 @@ namespace Yukar.Battle
                                     {
                                         if (!IsEffectEndPlay)
                                             isWaitInitialize = false;
-                                        return (camManager.isSkillCameraPlaying(false) && IsEffectEndPlay && !isWaitInitialize) || owner.battleEvents.isBusy();
+                                        var ok = (camManager.isSkillCameraPlaying(false) && IsEffectEndPlay && !isWaitInitialize) || owner.battleEvents.isBusy(false);
+                                        return ok;
                                     });
                                     camManager.playAnimation();
                                 }
@@ -2559,6 +2584,37 @@ namespace Yukar.Battle
                 p = new SharpKmyMath.Matrix4();
             }
 
+        }
+
+        /// <summary>
+        /// カメラアニメを強制終了する
+        /// Force quit camera animation
+        /// </summary>
+        internal void StopCameraAnimation()
+        {
+            if (camManager.ntpCamera != null)
+            {
+                var farclip = 2000;
+                var target = SharpKmyMath.Vector3.zero;
+
+                if (skillUser.mapChr != null)
+                {
+                    target = skillUser.getPos();
+                    target.y += skillUser.Height / 2;
+                }
+
+                // 新カメラ版
+                // new camera version
+                //target.y = c.offset.Y;
+                camManager.animationCameraMatrix(catalog, mapDrawer.mapRom, target, shakeValue, 1, farclip, out p, out v, out mCamLookAtTarget, 0f, 0f);
+
+                // アニメーション終了時は操作可能カメラに戻す
+                // Return to operable camera when animation ends
+                owner.battleEvents.CopyFromCameraManager(camManager);
+                campos = mCamLookAtTarget;
+                camManager.ntpCamera = null;
+                camManager.stopAnimation();
+            }
         }
 
         /// <summary>

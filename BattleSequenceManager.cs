@@ -81,6 +81,7 @@ namespace Yukar.Battle
         public override List<BattleEnemyData> EnemyViewDataList => enemyMonsterViewData;
 
 
+        BattleEnemyInfo[] monsterLayouts;
 
         internal BattleCharacterBase activeCharacter;
         int attackCount;
@@ -133,6 +134,8 @@ namespace Yukar.Battle
         private float elapsedTime4BattleStart;
         private string battleStartWord;
         private int totalTurn;
+        private int itemRate;
+        private int moneyRate;
 
         public BattleSequenceManager(GameMain owner, Catalog catalog)
         {
@@ -286,6 +289,7 @@ namespace Yukar.Battle
             enemyData = new List<BattleEnemyData>();
             stockEnemyData = new List<BattleEnemyData>();
 
+            monsterLayouts = new BattleEnemyInfo[monsters.Length];
 
             // 敵の設定
             // enemy settings
@@ -295,6 +299,8 @@ namespace Yukar.Battle
                     addEnemyData(monsters[index].Id, null, -1, monsters[index].Level);
                 else
                     addEnemyData(monsters[index].Id, monsters[index].Layout, -1, monsters[index].Level);
+
+                monsterLayouts[index] = monsters[index];
             }
 
             battlePlayerMax = Math.Min(battlePlayerMax, stockPlayerData.Count);
@@ -428,6 +434,158 @@ namespace Yukar.Battle
             battleEvents.playerLayouts = playerLayouts;
         }
 
+        /// <summary>
+        /// 状態での並び替え（射程使用のみ）
+        /// Sort by state (Range use only)
+        /// </summary>
+        /// <param name="inIsPlayer">プレイヤーのパーティか？</param>
+        /// <param name="inIsPlayer">party of players?</param>
+        /// <returns>並びが変わったか？</returns>
+        /// <returns>did the line change?</returns>
+        bool SortTargetData(bool inIsPlayer)
+        {
+            if (!gameSettings.useBehindParty)
+            {
+                return false;
+            }
+
+            BattleCharacterBase[] list;
+
+            if (gameSettings.usePositionBack)
+            {
+                list = inIsPlayer ? playerData.ToArray<BattleCharacterBase>() : enemyData.ToArray<BattleCharacterBase>();
+            }
+            else
+            {
+                list = inIsPlayer ? targetPlayerData.ToArray<BattleCharacterBase>() : targetEnemyData.ToArray<BattleCharacterBase>();
+            }
+
+            var targetList = new List<BattleCharacterBase>(list.Length);
+            var behindList = new List<BattleCharacterBase>(list.Length);
+            var deadList = new List<BattleCharacterBase>(list.Length);
+
+            foreach (var item in list)
+            {
+                if (item.IsDeadCondition())
+                {
+                    deadList.Add(item);
+                }
+                else if (item.IsBehindPartyCondition())
+                {
+                    behindList.Add(item);
+                }
+                else
+                {
+                    targetList.Add(item);
+                }
+            }
+
+            targetList.AddRange(behindList);
+            targetList.AddRange(deadList);
+
+            List<BattleCharacterBase> targetDataList = inIsPlayer ? targetPlayerData : targetEnemyData;
+
+            for (int i = 0; i < targetList.Count; i++)
+            {
+                if (targetList[i] != targetDataList[i])
+                {
+                    targetDataList.Clear();
+                    targetDataList.AddRange(targetList);
+
+                    if (inIsPlayer)
+                    {
+                        playerViewData.Clear();
+
+                        foreach (var item in targetList)
+                        {
+                            playerViewData.Add(item as BattlePlayerData);
+                        }
+                    }
+                    else
+                    {
+                        enemyMonsterViewData.Clear();
+
+                        foreach (var item in targetList)
+                        {
+                            enemyMonsterViewData.Add(item as BattleEnemyData);
+                        }
+                    }
+
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        void UpdatePlayerPosition()
+        {
+            if (!SortTargetData(true))
+            {
+                return;
+            }
+
+            MovePlayerPosition();
+        }
+
+        void MovePlayerPosition()
+        {
+            var playerLayouts = battleEvents.playerLayouts;
+
+            for (int i = 0; i < targetPlayerData.Count; i++)
+            {
+                var player = targetPlayerData[i] as BattlePlayerData;
+                Vector3 position;
+
+                if ((playerLayouts == null) || (playerLayouts.Length <= i))
+                {
+                    position = BattleCharacterPosition.getPosition(BattleSequenceManagerBase.battleFieldCenter, BattleCharacterPosition.PosType.FRIEND, i, battlePlayerMax);
+                }
+                else
+                {
+                    position = BattleSequenceManagerBase.battleFieldCenter + playerLayouts[i];
+                }
+
+                var actor = Viewer.searchFromActors(player);
+
+                actor.walk(position.X, position.Z, false);
+
+                player.calcHeroLayout(playerData.Count);
+            }
+        }
+
+        void UpdateEnemyPosition()
+        {
+            if (!SortTargetData(false))
+            {
+                return;
+            }
+
+            for (int i = 0; i < targetEnemyData.Count; i++)
+            {
+                var enemy = targetEnemyData[i] as BattleEnemyData;
+                Vector3 position;
+
+                if (monsterLayouts[i].IsLayoutValid())
+                {
+                    position = monsterLayouts[i].Layout + BattleSequenceManagerBase.battleFieldCenter;
+                }
+                else
+                {
+                    position = BattleCharacterPosition.getPosition(BattleSequenceManagerBase.battleFieldCenter, BattleCharacterPosition.PosType.ENEMY, i, battleEnemyMax);
+                }
+
+                var actor = Viewer.searchFromActors(enemy);
+
+                actor.walk(position.X, position.Z, false);
+            }
+        }
+
+        void UpdatePosition()
+        {
+            UpdatePlayerPosition();
+            UpdateEnemyPosition();
+        }
 
         internal void addVisibleEnemy(BattleEnemyData data)
         {
@@ -442,7 +600,7 @@ namespace Yukar.Battle
                 enemy.IsBattle = true;
                 enemy.IsStock = false;
 
-                if(!enemy.IsManualPosition)
+                if (!enemy.IsManualPosition)
                     enemy.SetPosition(BattleCharacterPosition.getPosition(BattleSequenceManagerBase.battleFieldCenter, BattleCharacterPosition.PosType.ENEMY, i, battleEnemyMax));
             }
         }
@@ -541,12 +699,12 @@ namespace Yukar.Battle
             if (level == -1)
             {
                 //data.SetParameters(monster);
-                var cast = Party.createHeroFromRom(catalog, monster, 1);
+                var cast = Party.createHeroFromRom(catalog, owner.data.party, monster, 1, true);
                 data.SetParameters(cast, party.getHeroName(monster.guId));
             }
             else
             {
-                var cast = Party.createHeroFromRom(catalog, monster, level);
+                var cast = Party.createHeroFromRom(catalog, owner.data.party, monster, level, true);
                 data.SetParameters(cast, party.getHeroName(monster.guId));
             }
 
@@ -633,16 +791,20 @@ namespace Yukar.Battle
 
         public override void ReleaseImageData()
         {
-            battleEvents.term();
+            EffectPreloadJob.clearPreloads();
+            battleEvents?.term();
 
             foreach (var player in playerData)
             {
                 disposePlayer(player);
             }
 
-            foreach (var player in stockPlayerData)
+            if (stockPlayerData != null)
             {
-                disposePlayer(player);
+                foreach (var player in stockPlayerData)
+                {
+                    disposePlayer(player);
+                }
             }
 
 
@@ -652,9 +814,12 @@ namespace Yukar.Battle
                 disposeEnemy(enemyMonster);
             }
 
-            foreach (var enemyMonster in stockEnemyData)
+            if (stockEnemyData != null)
             {
-                disposeEnemy(enemyMonster);
+                foreach (var enemyMonster in stockEnemyData)
+                {
+                    disposeEnemy(enemyMonster);
+                }
             }
 
 
@@ -780,18 +945,31 @@ namespace Yukar.Battle
 
             // 式がある？
             // do you have a formula?
+            string formula = null;
             if (attacker is BattlePlayerData)
             {
                 var weapon = ((BattlePlayerData)attacker).player.equipments[0];
                 if (weapon != null && !string.IsNullOrEmpty(weapon.weapon.formula))
                 {
-#if true
-                    totalDamage = EvalFormula(weapon.weapon.formula, attacker, target, attackAttribute, battleRandom);
-#else
-                    totalDamage = EvalFormula(weapon.weapon.formula, attacker, target, (int)attackAttribute, battleRandom);
-#endif
-
+                    formula = weapon.weapon.formula;
                 }
+            }
+            else if (attacker is BattleEnemyData)
+            {
+                var weapon = ((BattleEnemyData)attacker).monsterGameData.equipments[0];
+                if (weapon != null && !string.IsNullOrEmpty(weapon.weapon.formula))
+                {
+                    formula = weapon.weapon.formula;
+                }
+            }
+
+            if (formula != null)
+            {
+#if true
+                totalDamage = EvalFormula(formula, attacker, target, attackAttribute, battleRandom);
+#else
+                totalDamage = EvalFormula(formula, attacker, target, (int)attackAttribute, battleRandom);
+#endif
             }
 
             int damage = (int)(totalDamage * target.DamageRate * (isCritical ? 1.5f : 1.0f));
@@ -987,6 +1165,11 @@ namespace Yukar.Battle
                     case "edef":
                         return target.ResistanceAttackAttributePercent(attackAttribute);
                 }
+            }
+            else if(word.StartsWith("\\$["))
+            {
+                var valName = word.Substring(3, word.Length - 4);
+                return (float)GameMain.instance.data.system.GetVariable(valName);
             }
 
             return 0;
@@ -1690,6 +1873,8 @@ namespace Yukar.Battle
             {
                 battleEvents.start(option.commonExec);
             }
+
+            battleEvents.setLastSkillUserIndex(effecter);
         }
 
         public override void FixedUpdate()
@@ -1718,7 +1903,7 @@ namespace Yukar.Battle
                             if ((target.selectedBattleCommandType != BattleCommandType.Skip))
                             {
                                 if (target != activeCharacter &&
-                                    (condition.actionDisabled || condition.attack ))
+                                    (condition.actionDisabled || condition.attack))
                                 {
                                     target.selectedBattleCommandType = BattleCommandType.Cancel;
                                 }
@@ -1769,7 +1954,7 @@ namespace Yukar.Battle
                     {
                         recoveryStatusInfo.Add(new RecoveryStatusInfo(target, condition));
 
-                        if (condition.actionDisabled || condition.attack )
+                        if (condition.actionDisabled || condition.attack)
                         {
                             target.selectedBattleCommandType = BattleCommandType.Cancel;
                         }
@@ -1959,7 +2144,7 @@ namespace Yukar.Battle
                         {
                             recoveryStatusInfo.Add(new RecoveryStatusInfo(target, condition));
 
-                            if ( condition.actionDisabled || condition.attack )
+                            if (condition.actionDisabled || condition.attack)
                             {
                                 target.selectedBattleCommandType = BattleCommandType.Cancel;
                             }
@@ -2211,6 +2396,8 @@ namespace Yukar.Battle
 
             UpdateCommandSelect();
 
+            UpdateMoveTargetPos();
+
             UpdateBattleState();
 
             if (playerData != null)
@@ -2230,6 +2417,37 @@ namespace Yukar.Battle
 
 
                 battleViewer.Update(playerViewData, enemyMonsterViewData);
+            }
+        }
+
+        /// <summary>
+        /// 射程用の位置情報の更新
+        /// Location update for range
+        /// </summary>
+        private void UpdateMoveTargetPos()
+        {
+            for (int i = 0; i < targetPlayerData?.Count; i++)
+			{
+                var player = targetPlayerData[i] as BattlePlayerData;
+                var actor = Viewer.searchFromActors(player);
+
+				if (actor != null)
+				{
+                    player.moveTargetPos.X = actor.mapChr.pos.X;
+                    player.moveTargetPos.Z = actor.mapChr.pos.Z;
+                }
+            }
+
+            for (int i = 0; i < targetEnemyData?.Count; i++)
+			{
+                var enemy = targetEnemyData[i] as BattleEnemyData;
+                var actor = Viewer.searchFromActors(enemy);
+
+                if (actor != null)
+                {
+                    enemy.moveTargetPos.X = actor.mapChr.pos.X;
+                    enemy.moveTargetPos.Z = actor.mapChr.pos.Z;
+                }
             }
         }
 
@@ -2357,6 +2575,9 @@ namespace Yukar.Battle
                     break;
                 case BattleState.ProcessBattleFinish:
                     UpdateBattleState_ProcessBattleFinish();
+                    break;
+                case BattleState.ResultInit:
+                    UpdateBattleState_ResultInit();
                     break;
                 case BattleState.Result:
                     UpdateBattleState_Result();
@@ -2538,7 +2759,7 @@ namespace Yukar.Battle
                             break;
                         case FirstAttackType.Monster:// 先制された / preempted
                             firstAttackType = FirstAttackType.None;
-
+                            SetEnemyCommandImpl();
                             SkipPlayerBattleCommand();
                             break;
                         case FirstAttackType.None:
@@ -2625,7 +2846,7 @@ namespace Yukar.Battle
                         {
                             recoveryList.Add(info);
 
-                            break;
+                            continue;
                         }
                     }
 
@@ -2637,7 +2858,7 @@ namespace Yukar.Battle
                         {
                             recoveryList.Add(info);
 
-                            break;
+                            continue;
                         }
                     }
                 }
@@ -2700,6 +2921,7 @@ namespace Yukar.Battle
                 }
             }
 
+            UpdatePosition();
             ChangeBattleState(BattleState.CheckTurnRecoveryStatus);
         }
 
@@ -2767,14 +2989,14 @@ namespace Yukar.Battle
 
                     if (condition != null)
                     {
-                        if (condition.actionDisabled )
+                        if (condition.actionDisabled)
                         {
                             commandSelectPlayer.selectedBattleCommandType = BattleCommandType.Nothing;
 
                             setConditionBattleCommandType = true;
                             break;
                         }
-                        else if (condition.attack )
+                        else if (condition.attack)
                         {
                             commandSelectPlayer.selectedBattleCommandType = BattleCommandType.Attack;
 
@@ -2815,20 +3037,42 @@ namespace Yukar.Battle
 
 
             {
-                var enableAttack = true;
+                var enableAttack = false;
+
+                foreach (var enemy in enemyData)
+                {
+                    if ((enemy.HitPoint > 0) && IsHitRange(commandSelectPlayer, enemy))
+                    {
+                        enableAttack = true;
+
+                        break;
+                    }
+                }
 
                 foreach (var guid in commandSelectPlayer.player.rom.battleCommandList)
                 {
                     var command = (Rom.BattleCommand)catalog.getItemFromGuid(guid);
 
-					if (command.type == BattleCommand.CommandType.NONE)
-					{
+                    if (command.type == BattleCommand.CommandType.NONE)
+                    {
                         continue;
-					}
+                    }
 
                     playerBattleCommand.Add(command);
 
-                    var enable = (command.type != BattleCommand.CommandType.ATTACK) || enableAttack;
+                    var enable = true;
+
+                    switch (command.type)
+                    {
+                        case BattleCommand.CommandType.ATTACK:
+                            enable = enableAttack;
+                            break;
+                        case BattleCommand.CommandType.POSITION:
+                            enable = targetPlayerData.Count > 1;
+                            break;
+                        default:
+                            break;
+                    }
 
                     if (iconTable.ContainsKey(command.icon.guId))
                     {
@@ -2975,7 +3219,55 @@ namespace Yukar.Battle
 
             commandSelectedMemberCount++;
 
+            // エフェクト先読み
+            // Effect lookahead
+            GetCommandEffectImpl(commandSelectPlayer, catalog, out var efA, out var efB);
+            preloadEffect(efA);
+            preloadEffect(efB);
+
             ChangeBattleState(BattleState.SelectActivePlayer);
+        }
+
+        private class EffectPreloadJob : SharpKmyBase.Job
+        {
+            private static Dictionary<Guid, SharpKmyGfx.ParticleInstance> preloadTargets = new Dictionary<Guid, SharpKmyGfx.ParticleInstance>();
+            private Guid guid;
+            private Catalog catalog;
+
+            public EffectPreloadJob(Guid guid, Catalog catalog)
+            {
+                this.guid = guid;
+                this.catalog = catalog;
+            }
+
+            public override void func()
+            {
+                var pt = catalog.getItemFromGuid(guid) as Resource.Particle;
+                while (pt != null)
+                {
+                    if (preloadTargets.ContainsKey(guid))
+                        break;
+
+                    var inst = new SharpKmyGfx.ParticleInstance(pt.path, 0);
+                    pt = catalog.getItemFromGuid(pt.BattleSettingChainTarget) as Resource.Particle;
+                    preloadTargets.Add(guid, inst);
+                }
+            }
+
+            public static void clearPreloads()
+            {
+                foreach(var inst in preloadTargets.Values)
+                {
+                    inst.Release();
+                }
+                preloadTargets.Clear();
+            }
+        }
+
+        private void preloadEffect(Guid guid)
+        {
+            var job = new EffectPreloadJob(guid, catalog);
+            SharpKmyBase.Job.addJob(job);
         }
 
         private void UpdateBattleState_SortBattleActions()
@@ -3011,13 +3303,24 @@ namespace Yukar.Battle
                 return;
             }
 
+            SetEnemyCommandImpl();
+
+            ChangeBattleState(BattleState.SelectActivePlayer);
+        }
+
+        private void SetEnemyCommandImpl()
+        {
             foreach (var monsterData in enemyData)
             {
                 SelectEnemyCommand(monsterData, false, false);
                 ((BattleViewer3D)battleViewer).setEnemyActionReady(monsterData);
-            }
 
-            ChangeBattleState(BattleState.SelectActivePlayer);
+                // エフェクト先読み
+                // Effect lookahead
+                GetCommandEffectImpl(monsterData, catalog, out var efA, out var efB);
+                preloadEffect(efA);
+                preloadEffect(efB);
+            }
         }
 
         /// <summary>
@@ -3057,12 +3360,12 @@ namespace Yukar.Battle
                 {
                     var executeAction = activeAction.ElementAt(battleRandom.Next(activeAction.Count()));
 
-                    foreach(var action in activeAction)
+                    foreach (var action in activeAction)
                     {
                         if (action == executeAction)
                             continue;
 
-                        if(action.type == Rom.ActionType.SKILL)
+                        if (action.type == Rom.ActionType.SKILL)
                             GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, monsterData.Name,
                                 string.Format("Selectable Action / Skill : {0}", catalog.getItemFromGuid(action.refByAction)?.name ?? "Nothing"));
                         else
@@ -3105,13 +3408,13 @@ namespace Yukar.Battle
                         case Rom.ActionType.ATTACK:
                         case Rom.ActionType.CRITICAL:
                         case Rom.ActionType.FORCE_CRITICAL:
-                            foreach (var player in targetPlayerData.Where(target => target.HitPoint > 0))
+                            foreach (var player in targetPlayerData.Where(target => (target.HitPoint > 0) && IsHitRange(monsterData, target)))
                             {
                                 monsterData.commandTargetList.Add(player);
                             }
 
-							if (monsterData.commandTargetList.Count == 0)
-							{
+                            if (monsterData.commandTargetList.Count == 0)
+                            {
                                 goto case Rom.ActionType.DO_NOTHING;
                             }
 
@@ -3244,7 +3547,7 @@ namespace Yukar.Battle
 
             turn = turn > 0 ? turn : monsterData.ExecuteCommandTurnCount;
 
-            if(isCounter)
+            if (isCounter)
                 GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, monsterData.Name,
                     string.Format("Select Counter Action / Turn No. : {0}", turn));
             else
@@ -3327,10 +3630,10 @@ namespace Yukar.Battle
             {
                 case Rom.AIPattern.NORMAL:
                 case Rom.AIPattern.CLEVER:
-                    {
-                        var rnd = battleRandom.Next(hateRateSumList.Last());
-                        return list.ElementAt(hateRateSumList.FindIndex(x => rnd < x));
-                    }
+                {
+                    var rnd = battleRandom.Next(hateRateSumList.Last());
+                    return list.ElementAt(hateRateSumList.FindIndex(x => rnd < x));
+                }
 
                 case Rom.AIPattern.TRICKY:
                     if (battleRandom.Next(100) < 75)
@@ -3399,6 +3702,9 @@ namespace Yukar.Battle
 
         private void UpdateBattleState_ReadyExecuteCommand()
         {
+            // キャストの行動の都度、位置調整する時はコメントを外す
+            // Remove the comment when adjusting the position each time the cast acts
+            //UpdatePosition();
 
             activeCharacter = battleEntryCharacters[commandExecuteMemberCount];
             attackCount = 0;
@@ -3475,12 +3781,12 @@ namespace Yukar.Battle
                 }
                 else
                 {
-					switch (activeCharacter.selectedBattleCommandType)
-					{
-						case BattleCommandType.PlayerEscape:
-						case BattleCommandType.MonsterEscape:
-							break;
-						default:
+                    switch (activeCharacter.selectedBattleCommandType)
+                    {
+                        case BattleCommandType.PlayerEscape:
+                        case BattleCommandType.MonsterEscape:
+                            break;
+                        default:
                             // 攻撃対象を変える必要があるかチェック
                             // Check if the attack target needs to be changed
                             CheckAndDoReTarget();
@@ -3492,7 +3798,7 @@ namespace Yukar.Battle
                                 return;
                             }
                             break;
-					}
+                    }
 
                     activeCharacter.ExecuteCommandStart();
 
@@ -3541,13 +3847,13 @@ namespace Yukar.Battle
 
             recoveryStatusInfo.Clear();
 
-			// 強制攻撃の時はターゲットを強制的に変更する
-			// Forcibly change the target during a forced attack
-			switch (activeCharacter.selectedBattleCommandType)
-			{
-				case BattleCommandType.Attack:
-				case BattleCommandType.Critical:
-				case BattleCommandType.ForceCritical:
+            // 強制攻撃の時はターゲットを強制的に変更する
+            // Forcibly change the target during a forced attack
+            switch (activeCharacter.selectedBattleCommandType)
+            {
+                case BattleCommandType.Attack:
+                case BattleCommandType.Critical:
+                case BattleCommandType.ForceCritical:
                 case BattleCommandType.Miss:
                     if (attackCount == 0)
                     {
@@ -3558,10 +3864,10 @@ namespace Yukar.Battle
                             activeCharacter.targetCharacter = new[] { attackConditionTarget };
                         }
                     }
-					break;
-				default:
-					break;
-			}
+                    break;
+                default:
+                    break;
+            }
 
             attackCount++;
 
@@ -3571,40 +3877,40 @@ namespace Yukar.Battle
                 case BattleCommandType.Critical:
                 case BattleCommandType.ForceCritical:
                 case BattleCommandType.Miss:
+                {
+                    var isMiss = activeCharacter.selectedBattleCommandType == BattleCommandType.Miss;
+                    var isForceCritical = activeCharacter.selectedBattleCommandType == BattleCommandType.ForceCritical;
+
+                    foreach (var target in activeCharacter.targetCharacter)
                     {
-                        var isMiss = activeCharacter.selectedBattleCommandType == BattleCommandType.Miss;
-                        var isForceCritical = activeCharacter.selectedBattleCommandType == BattleCommandType.ForceCritical;
+                        GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, activeCharacter.Name,
+                            string.Format("Hit Judgment / Dexterity : {0} / Evation : {1}", activeCharacter.Dexterity, target.Evasion));
 
-                        foreach (var target in activeCharacter.targetCharacter)
+                        if (!isMiss && (isForceCritical || IsHit(activeCharacter, target)))
                         {
-                            GameMain.PushLog(DebugDialog.LogEntry.LogType.BATTLE, activeCharacter.Name,
-                                string.Format("Hit Judgment / Dexterity : {0} / Evation : {1}", activeCharacter.Dexterity, target.Evasion));
+                            var isCritical = isForceCritical || (battleRandom.Next(100) < activeCharacter.Critical);
+                            var damage = CalcAttackWithWeaponDamage(activeCharacter, target, activeCharacter.AttackAttribute, isCritical, damageTextList);
 
-                            if (!isMiss && (isForceCritical || IsHit(activeCharacter, target)))
-                            {
-                                var isCritical = isForceCritical || (battleRandom.Next(100) < activeCharacter.Critical);
-                                var damage = CalcAttackWithWeaponDamage(activeCharacter, target, activeCharacter.AttackAttribute, isCritical, damageTextList);
+                            target.HitPoint -= damage;
 
-                                target.HitPoint -= damage;
+                            CheckDamageRecovery(target, damage);
 
-                                CheckDamageRecovery(target, damage);
+                            setAttributeWithWeaponDamage(target, activeCharacter.AttackAttribute, activeCharacter.ElementAttack);
 
-                                setAttributeWithWeaponDamage(target, activeCharacter.AttackAttribute, activeCharacter.ElementAttack);
+                            target.CommandReactionType = ReactionType.Damage;
 
-                                target.CommandReactionType = ReactionType.Damage;
+                            activeCharacter.commandEnemyEffectCharacters.Add(target);
 
-                                activeCharacter.commandEnemyEffectCharacters.Add(target);
-
-                                SetCounterAction(target, activeCharacter);
-                            }
-                            else
-                            {
-                                damageTextList.Add(new BattleDamageTextInfo(BattleDamageTextInfo.TextType.Miss, target, gameSettings.glossary.battle_miss));
-                                target.CommandReactionType = ReactionType.None;
-                            }
+                            SetCounterAction(target, activeCharacter);
+                        }
+                        else
+                        {
+                            damageTextList.Add(new BattleDamageTextInfo(BattleDamageTextInfo.TextType.Miss, target, gameSettings.glossary.battle_miss));
+                            target.CommandReactionType = ReactionType.None;
                         }
                     }
-                    break;
+                }
+                break;
 
                 case BattleCommandType.Guard:
                     foreach (var target in activeCharacter.targetCharacter)
@@ -3632,17 +3938,47 @@ namespace Yukar.Battle
                     break;
 
                 case BattleCommandType.SameSkillEffect:
+                {
+                    BattleCharacterBase[] friendEffectTargets, enemyEffectTargets;
+                    BattleCharacterBase[] friendEffectedCharacters, enemyEffectedCharacters;
+
+                    var skill = catalog.getItemFromGuid(activeCharacter.selectedBattleCommand.refGuid) as Rom.NSkill;
+
+                    GetSkillTarget(skill, out friendEffectTargets, out enemyEffectTargets);
+
+
+
+                    EffectSkill(activeCharacter, skill, friendEffectTargets.ToArray(), enemyEffectTargets.ToArray(), damageTextList, recoveryStatusInfo, out friendEffectedCharacters, out enemyEffectedCharacters);
+
+                    activeCharacter.targetCharacter = friendEffectedCharacters.Union(enemyEffectedCharacters).ToArray();
+
+                    battleEvents.setLastSkillTargetIndex(friendEffectTargets, enemyEffectTargets);
+
+                    activeCharacter.commandFriendEffectCharacters.AddRange(friendEffectedCharacters);
+                    activeCharacter.commandEnemyEffectCharacters.AddRange(enemyEffectedCharacters);
+
+                    if (activeCharacter.targetCharacter.Count() == 0)
                     {
-                        BattleCharacterBase[] friendEffectTargets, enemyEffectTargets;
-                        BattleCharacterBase[] friendEffectedCharacters, enemyEffectedCharacters;
+                        activeCharacter.targetCharacter = null;
+                    }
+                }
+                break;
 
-                        var skill = catalog.getItemFromGuid(activeCharacter.selectedBattleCommand.refGuid) as Rom.NSkill;
+                case BattleCommandType.Skill:
+                // スキル効果対象 再選択
+                // Skill effect target reselection
+                {
+                    BattleCharacterBase[] friendEffectTargets, enemyEffectTargets;
+                    BattleCharacterBase[] friendEffectedCharacters, enemyEffectedCharacters;
 
-                        GetSkillTarget(skill, out friendEffectTargets, out enemyEffectTargets);
+                    GetSkillTarget(activeCharacter.selectedSkill, out friendEffectTargets, out enemyEffectTargets);
 
-
-
-                        EffectSkill(activeCharacter, skill, friendEffectTargets.ToArray(), enemyEffectTargets.ToArray(), damageTextList, recoveryStatusInfo, out friendEffectedCharacters, out enemyEffectedCharacters);
+                    if (activeCharacter.HitPoint > activeCharacter.selectedSkill.option.consumptionHitpoint &&
+                        activeCharacter.MagicPoint >= activeCharacter.selectedSkill.option.consumptionMagicpoint &&
+                        isQualifiedSkillCostItem(activeCharacter, activeCharacter.selectedSkill))
+                    {
+                        PaySkillCost(activeCharacter, activeCharacter.selectedSkill);
+                        EffectSkill(activeCharacter, activeCharacter.selectedSkill, friendEffectTargets.ToArray(), enemyEffectTargets.ToArray(), damageTextList, recoveryStatusInfo, out friendEffectedCharacters, out enemyEffectedCharacters);
 
                         activeCharacter.targetCharacter = friendEffectedCharacters.Union(enemyEffectedCharacters).ToArray();
 
@@ -3650,119 +3986,114 @@ namespace Yukar.Battle
 
                         activeCharacter.commandFriendEffectCharacters.AddRange(friendEffectedCharacters);
                         activeCharacter.commandEnemyEffectCharacters.AddRange(enemyEffectedCharacters);
-
-                        if (activeCharacter.targetCharacter.Count() == 0)
-                        {
-                            activeCharacter.targetCharacter = null;
-                        }
                     }
-                    break;
-
-                case BattleCommandType.Skill:
-                    // スキル効果対象 再選択
-                    // Skill effect target reselection
+                    else
                     {
-                        BattleCharacterBase[] friendEffectTargets, enemyEffectTargets;
-                        BattleCharacterBase[] friendEffectedCharacters, enemyEffectedCharacters;
-
-                        GetSkillTarget(activeCharacter.selectedSkill, out friendEffectTargets, out enemyEffectTargets);
-
-                        if (activeCharacter.HitPoint > activeCharacter.selectedSkill.option.consumptionHitpoint &&
-                            activeCharacter.MagicPoint >= activeCharacter.selectedSkill.option.consumptionMagicpoint &&
-                            isQualifiedSkillCostItem(activeCharacter, activeCharacter.selectedSkill))
-                        {
-                            PaySkillCost(activeCharacter, activeCharacter.selectedSkill);
-                            EffectSkill(activeCharacter, activeCharacter.selectedSkill, friendEffectTargets.ToArray(), enemyEffectTargets.ToArray(), damageTextList, recoveryStatusInfo, out friendEffectedCharacters, out enemyEffectedCharacters);
-
-                            activeCharacter.targetCharacter = friendEffectedCharacters.Union(enemyEffectedCharacters).ToArray();
-
-                            battleEvents.setLastSkillTargetIndex(friendEffectTargets, enemyEffectTargets);
-
-                            activeCharacter.commandFriendEffectCharacters.AddRange(friendEffectedCharacters);
-                            activeCharacter.commandEnemyEffectCharacters.AddRange(enemyEffectedCharacters);
-                        }
-                        else
-                        {
-                            activeCharacter.targetCharacter = null;
-                            if (activeCharacter.HitPoint <= activeCharacter.selectedSkill.option.consumptionHitpoint)
-                                activeCharacter.skillFailCauses = gameSettings.glossary.hp;
-                            else if (activeCharacter.MagicPoint < activeCharacter.selectedSkill.option.consumptionMagicpoint)
-                                activeCharacter.skillFailCauses = gameSettings.glossary.mp;
-                            else if (!isQualifiedSkillCostItem(activeCharacter, activeCharacter.selectedSkill))
-                                activeCharacter.skillFailCauses = catalog.getItemFromGuid(activeCharacter.selectedSkill.ConsumptionItem)?.name ?? gameSettings.glossary.item;
-                        }
+                        activeCharacter.targetCharacter = null;
+                        if (activeCharacter.HitPoint <= activeCharacter.selectedSkill.option.consumptionHitpoint)
+                            activeCharacter.skillFailCauses = gameSettings.glossary.hp;
+                        else if (activeCharacter.MagicPoint < activeCharacter.selectedSkill.option.consumptionMagicpoint)
+                            activeCharacter.skillFailCauses = gameSettings.glossary.mp;
+                        else if (!isQualifiedSkillCostItem(activeCharacter, activeCharacter.selectedSkill))
+                            activeCharacter.skillFailCauses = catalog.getItemFromGuid(activeCharacter.selectedSkill.ConsumptionItem)?.name ?? gameSettings.glossary.item;
                     }
-                    break;
+                }
+                break;
 
                 case BattleCommandType.Item:
+                {
+                    var selectedItem = activeCharacter.selectedItem;
+
+                    if (selectedItem.item.IsExpandableWithSkill)
                     {
-                        var selectedItem = activeCharacter.selectedItem;
-
-                        if (selectedItem.item.IsExpandableWithSkill)
+                        if (activeCharacter.targetCharacter != null)
                         {
-                            if (activeCharacter.targetCharacter != null)
+                            BattleCharacterBase[] friendEffectTargets, enemyEffectTargets;
+                            BattleCharacterBase[] friendEffectedCharacters, enemyEffectedCharacters;
+
+                            var skill = catalog.getItemFromGuid(selectedItem.item.expendableWithSkill.skill) as Common.Rom.NSkill;
+
+                            if (skill != null)
                             {
-                                BattleCharacterBase[] friendEffectTargets, enemyEffectTargets;
-                                BattleCharacterBase[] friendEffectedCharacters, enemyEffectedCharacters;
+                                GetSkillTarget(skill, out friendEffectTargets, out enemyEffectTargets);
 
-                                var skill = catalog.getItemFromGuid(selectedItem.item.expendableWithSkill.skill) as Common.Rom.NSkill;
+                                EffectSkill(activeCharacter, skill, friendEffectTargets.ToArray(), enemyEffectTargets.ToArray(), damageTextList, recoveryStatusInfo, out friendEffectedCharacters, out enemyEffectedCharacters);
 
-                                if (skill != null)
+                                activeCharacter.targetCharacter = friendEffectedCharacters.Union(enemyEffectedCharacters).ToArray();
+
+                                battleEvents.setLastSkillTargetIndex(friendEffectTargets, enemyEffectTargets);
+
+                                if (activeCharacter.targetCharacter.Count() > 0)
                                 {
-                                    GetSkillTarget(skill, out friendEffectTargets, out enemyEffectTargets);
+                                    // アイテムの数を減らす
+                                    // reduce the number of items
+                                    if (selectedItem.item.Consumption)
+                                        selectedItem.num--;
+                                    party.SetItemNum(selectedItem.item.guId, selectedItem.num);
 
-                                    EffectSkill(activeCharacter, skill, friendEffectTargets.ToArray(), enemyEffectTargets.ToArray(), damageTextList, recoveryStatusInfo, out friendEffectedCharacters, out enemyEffectedCharacters);
-
-                                    activeCharacter.targetCharacter = friendEffectedCharacters.Union(enemyEffectedCharacters).ToArray();
-
-                                    battleEvents.setLastSkillTargetIndex(friendEffectTargets, enemyEffectTargets);
-
-                                    if (activeCharacter.targetCharacter.Count() > 0)
-                                    {
-                                        // アイテムの数を減らす
-                                        // reduce the number of items
-                                        if (selectedItem.item.Consumption)
-                                            selectedItem.num--;
-                                        party.SetItemNum(selectedItem.item.guId, selectedItem.num);
-
-                                        activeCharacter.commandFriendEffectCharacters.AddRange(friendEffectedCharacters);
-                                        activeCharacter.commandEnemyEffectCharacters.AddRange(enemyEffectedCharacters);
-                                    }
-                                }
-                            }
-                        }
-                        else if (selectedItem.item.IsExpandable)
-                        {
-                            if (activeCharacter.targetCharacter != null)
-                            {
-                                var useRest = activeCharacter.targetCharacter.Length;
-
-                                foreach (var target in activeCharacter.targetCharacter)
-                                {
-                                    if (UseItem(selectedItem.item, target, damageTextList, recoveryStatusInfo))
-                                    {
-                                        useRest--;
-
-                                        // アイテムの数を減らす
-                                        // reduce the number of items
-                                        if (selectedItem.item.Consumption)
-                                            selectedItem.num--;
-                                        party.SetItemNum(selectedItem.item.guId, selectedItem.num);
-                                    }
-
-                                    target.CommandReactionType = ReactionType.None;
-
-
-                                    if (useRest <= 0)
-                                    {
-                                        break;
-                                    }
+                                    activeCharacter.commandFriendEffectCharacters.AddRange(friendEffectedCharacters);
+                                    activeCharacter.commandEnemyEffectCharacters.AddRange(enemyEffectedCharacters);
                                 }
                             }
                         }
                     }
-                    break;
+                    else if (selectedItem.item.IsExpandable)
+                    {
+                        if (activeCharacter.targetCharacter != null)
+                        {
+                            var useRest = activeCharacter.targetCharacter.Length;
 
+                            foreach (var target in activeCharacter.targetCharacter)
+                            {
+                                if (IsHitRange(activeCharacter, selectedItem.item, target) && UseItem(selectedItem.item, target, damageTextList, recoveryStatusInfo))
+                                {
+                                    useRest--;
+
+                                    // アイテムの数を減らす
+                                    // reduce the number of items
+                                    if (selectedItem.item.Consumption)
+                                        selectedItem.num--;
+                                    party.SetItemNum(selectedItem.item.guId, selectedItem.num);
+                                }
+
+                                target.CommandReactionType = ReactionType.None;
+
+
+                                if (useRest <= 0)
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+
+                case BattleCommandType.Position:
+                    if (activeCharacter.targetCharacter != null)
+                    {
+                        var targetCharacter = activeCharacter.targetCharacter[0];
+                        var idx = playerData.IndexOf(activeCharacter as BattlePlayerData);
+                        var targetIdx = playerData.IndexOf(targetCharacter as BattlePlayerData);
+
+                        playerData[idx] = targetCharacter as BattlePlayerData;
+                        playerData[targetIdx] = activeCharacter as BattlePlayerData;
+
+                        idx = targetPlayerData.IndexOf(activeCharacter);
+                        targetIdx = targetPlayerData.IndexOf(targetCharacter);
+
+                        targetPlayerData[idx] = targetCharacter;
+                        targetPlayerData[targetIdx] = activeCharacter;
+
+                        idx = playerViewData.IndexOf(activeCharacter as BattlePlayerData);
+                        targetIdx = playerViewData.IndexOf(targetCharacter as BattlePlayerData);
+
+                        playerViewData[idx] = targetCharacter as BattlePlayerData;
+                        playerViewData[targetIdx] = activeCharacter as BattlePlayerData;
+
+                        MovePlayerPosition();
+                    }
+                    break;
 
                 case BattleCommandType.Nothing:
                 case BattleCommandType.Nothing_Down:
@@ -3809,7 +4140,9 @@ namespace Yukar.Battle
 
         private void GetSkillTarget(Rom.NSkill skill, out BattleCharacterBase[] friendEffectTargets, out BattleCharacterBase[] enemyEffectTargets)
         {
-            activeCharacter.GetSkillTarget(skill, out friendEffectTargets, out enemyEffectTargets);
+            activeCharacter.GetSkillTarget(skill, out friendEffectTargets, out enemyEffectTargets,
+                activeCharacter.FriendPartyRefMember.Where(x => IsHitRange(activeCharacter, skill.Range, x)),
+                activeCharacter.EnemyPartyRefMember.Where(x => IsHitRange(activeCharacter, skill.Range, x)));
         }
 
         private void SetCounterAction(BattleCharacterBase target, BattleCharacterBase source)
@@ -3819,7 +4152,7 @@ namespace Yukar.Battle
                 return;
 
             var actions = GetActiveActions(enm, true, enm.currentActionTurn);
-            if(actions.FirstOrDefault() != null)
+            if (actions.FirstOrDefault() != null)
             {
                 target.selectedBattleCommandType = BattleCommandType.Undecided;
                 SelectEnemyCommand(enm, false, true, enm.currentActionTurn, actions);
@@ -3911,7 +4244,7 @@ namespace Yukar.Battle
 
                 if (!isActionDisabled || (condition != null))
                 {
-                    isActionDisabled = isActionDisabled || condition.actionDisabled ;
+                    isActionDisabled = isActionDisabled || condition.actionDisabled;
                 }
             }
 
@@ -4015,8 +4348,49 @@ namespace Yukar.Battle
 
         private void UpdateBattleState_SetCommandEffect()
         {
-            var friendEffectGuid = Guid.Empty;
-            var enemyEffectGuid = Guid.Empty;
+            ClearCommandEffect();
+            GetCommandEffectImpl(activeCharacter, catalog, out var friendEffectGuid, out var enemyEffectGuid);
+
+            if (activeCharacter.targetCharacter != null)
+            {
+                if (!activeCharacter.IsHero)
+                {
+                    // 敵がスキルを使用した場合、敵味方を反転させる
+                    // Inverts allies and enemies when using a skill
+                    var tmp = friendEffectGuid;
+
+                    friendEffectGuid = enemyEffectGuid;
+                    enemyEffectGuid = tmp;
+                }
+
+                foreach (var target in activeCharacter.targetCharacter)
+                {
+                    if (friendEffectGuid != Guid.Empty && target.IsHero)
+                    {
+                        battleViewer.SetBattlePlayerEffect(friendEffectGuid, target);
+                    }
+                    else if (enemyEffectGuid != Guid.Empty && !target.IsHero)
+                    {
+                        battleViewer.SetBattleMonsterEffect(enemyEffectGuid, target);
+                    }
+                }
+            }
+
+            ChangeBattleState(BattleState.DisplayCommandEffect);
+            EffectDrawer3D.ResetStartWait();
+        }
+
+        private void ClearCommandEffect()
+        {
+            battleViewer.effectDrawTargetPlayerList.Clear();
+            battleViewer.effectDrawTargetMonsterList.Clear();
+            battleViewer.defeatEffectDrawTargetList.Clear();
+        }
+
+        private static void GetCommandEffectImpl(BattleCharacterBase activeCharacter, Catalog catalog, out Guid friendEffectGuid, out Guid enemyEffectGuid)
+        {
+            friendEffectGuid = Guid.Empty;
+            enemyEffectGuid = Guid.Empty;
 
             switch (activeCharacter.selectedBattleCommandType)
             {
@@ -4139,34 +4513,6 @@ namespace Yukar.Battle
                     }
                     break;
             }
-
-            if (activeCharacter.targetCharacter != null)
-            {
-                if (!activeCharacter.IsHero)
-                {
-                    // 敵がスキルを使用した場合、敵味方を反転させる
-                    // Inverts allies and enemies when using a skill
-                    var tmp = friendEffectGuid;
-
-                    friendEffectGuid = enemyEffectGuid;
-                    enemyEffectGuid = tmp;
-                }
-
-                foreach (var target in activeCharacter.targetCharacter)
-                {
-                    if (friendEffectGuid != Guid.Empty && target.IsHero)
-                    {
-                        battleViewer.SetBattlePlayerEffect(friendEffectGuid, target);
-                    }
-                    else if (enemyEffectGuid != Guid.Empty && !target.IsHero)
-                    {
-                        battleViewer.SetBattleMonsterEffect(enemyEffectGuid, target);
-                    }
-                }
-            }
-
-            ChangeBattleState(BattleState.DisplayCommandEffect);
-            EffectDrawer3D.ResetStartWait();
         }
 
         private void UpdateBattleState_DisplayCommandEffect()
@@ -4427,9 +4773,7 @@ namespace Yukar.Battle
 
         private void UpdateBattleState_CheckBattleCharacterDown1()
         {
-            battleViewer.effectDrawTargetPlayerList.Clear();
-            battleViewer.effectDrawTargetMonsterList.Clear();
-            battleViewer.defeatEffectDrawTargetList.Clear();
+            ClearCommandEffect();
 
             CheckBattleCharacterDown();
 
@@ -4469,7 +4813,7 @@ namespace Yukar.Battle
                 {
                     var condition = e.rom;
 
-                    if ((condition != null) && condition.slipDamage )
+                    if ((condition != null) && condition.slipDamage)
                     {
                         var damage = 0;
 
@@ -4553,9 +4897,7 @@ namespace Yukar.Battle
 
         private void UpdateBattleState_CheckBattleCharacterDown2()
         {
-            battleViewer.effectDrawTargetPlayerList.Clear();
-            battleViewer.effectDrawTargetMonsterList.Clear();
-            battleViewer.defeatEffectDrawTargetList.Clear();
+            ClearCommandEffect();
 
             CheckBattleCharacterDown();
 
@@ -4687,6 +5029,14 @@ namespace Yukar.Battle
                 ApplyPlayerDataToGameData();
             }
             ProcessBattleResult(CheckBattleFinish());
+        }
+
+        private void UpdateBattleState_ResultInit()
+        {
+            if (!battleEvents.isBusy())
+            {
+                ChangeBattleState(BattleState.Result);
+            }
         }
 
         private void UpdateBattleState_Result()
@@ -4859,7 +5209,7 @@ namespace Yukar.Battle
                         displayedSetConditionsDic[target].Add(condition);
                     }
                 }
-                else if(condition.deadConditionPercent == 0)
+                else if (condition.deadConditionPercent == 0)
                 {
                     target.HitPoint = 0;
                 }
@@ -4939,6 +5289,9 @@ namespace Yukar.Battle
                             isFriendRecoveryDownStatus = (skill.friendEffect != null && skill.friendEffect.HasDeadCondition(catalog) && skill.option.onlyForDown);
                         }
                         break;
+                    case BattleCommandType.Position:
+                        cancel = true;
+                        break;
                 }
 
                 activeCharacter.targetCharacter = cancel ? null : ReTarget(activeCharacter, isFriendRecoveryDownStatus);
@@ -4986,6 +5339,7 @@ namespace Yukar.Battle
                             case BattleCommand.CommandType.ITEMMENU: battleCommandState = SelectBattleCommandState.Item_Command; break;
                             case BattleCommand.CommandType.ESCAPE: battleCommandState = SelectBattleCommandState.Escape_Command; break;
                             case BattleCommand.CommandType.BACK: battleCommandState = SelectBattleCommandState.Back_Command; break;
+                            case BattleCommand.CommandType.POSITION: battleCommandState = SelectBattleCommandState.Position_MakeTargetList; break;
                         }
 
                     }
@@ -5002,18 +5356,18 @@ namespace Yukar.Battle
                 // normal attack
                 case SelectBattleCommandState.Attack_Command:
 
-                    {
-                        battleCommandState = SelectBattleCommandState.Attack_MakeTargetList;
-                    }
-                    break;
+                {
+                    battleCommandState = SelectBattleCommandState.Attack_MakeTargetList;
+                }
+                break;
 
                 case SelectBattleCommandState.Attack_MakeTargetList:
                 {
                     commandSelectPlayer.commandTargetList.Clear();
                     commandTargetWindowDrawer.Clear();
 
-                    commandSelectPlayer.commandTargetList.AddRange(targetEnemyData.Where(enemy => enemy.HitPoint > 0));
-                        commandTargetWindowDrawer.AddBattleCharacters(commandSelectPlayer.commandTargetList);
+                    commandSelectPlayer.commandTargetList.AddRange(targetEnemyData.Where(enemy => (enemy.HitPoint > 0) && IsHitRange(commandSelectPlayer, enemy)));
+                    commandTargetWindowDrawer.AddBattleCharacters(commandSelectPlayer.commandTargetList);
 
                     commandTargetWindowDrawer.ResetSelect(commandSelectPlayer);
 
@@ -5086,7 +5440,7 @@ namespace Yukar.Battle
                         {
                             case Rom.TargetType.PARTY_ONE:
                             case Rom.TargetType.PARTY_ONE_ENEMY_ALL:
-                                commandSelectPlayer.commandTargetList.AddRange(targetPlayerData.Cast<BattleCharacterBase>());
+                                commandSelectPlayer.commandTargetList.AddRange(targetPlayerData.Where(x => IsHitRange(commandSelectPlayer, skill.Range, x)));
 
                                 commandTargetWindowDrawer.AddBattleCharacters(commandSelectPlayer.commandTargetList);
 
@@ -5102,8 +5456,7 @@ namespace Yukar.Battle
                             case Rom.TargetType.PARTY_ALL_ENEMY_ONE:
                             case Rom.TargetType.SELF_ENEMY_ONE:
                             case Rom.TargetType.OTHERS_ENEMY_ONE:
-                                commandSelectPlayer.commandTargetList.AddRange(
-                                    targetEnemyData.Where(enemy => enemy.HitPoint > 0).Cast<BattleCharacterBase>());
+                                commandSelectPlayer.commandTargetList.AddRange(targetEnemyData.Where(enemy => (enemy.HitPoint > 0) && IsHitRange(commandSelectPlayer, skill.Range, enemy)));
 
                                 commandTargetWindowDrawer.AddBattleCharacters(commandSelectPlayer.commandTargetList);
 
@@ -5247,7 +5600,7 @@ namespace Yukar.Battle
                         {
                             case Rom.TargetType.PARTY_ONE:
                             case Rom.TargetType.PARTY_ONE_ENEMY_ALL:
-                                commandSelectPlayer.commandTargetList.AddRange(targetPlayerData.Cast<BattleCharacterBase>());
+                                commandSelectPlayer.commandTargetList.AddRange(targetPlayerData.Where(x => IsHitRange(commandSelectPlayer, commandSelectPlayer.selectedSkill.Range, x)));
 
                                 commandTargetWindowDrawer.AddBattleCharacters(commandSelectPlayer.commandTargetList);
 
@@ -5263,8 +5616,7 @@ namespace Yukar.Battle
                             case Rom.TargetType.PARTY_ALL_ENEMY_ONE:
                             case Rom.TargetType.SELF_ENEMY_ONE:
                             case Rom.TargetType.OTHERS_ENEMY_ONE:
-                                commandSelectPlayer.commandTargetList.AddRange(
-                                    targetEnemyData.Where(enemy => enemy.HitPoint > 0).Cast<BattleCharacterBase>());
+                                commandSelectPlayer.commandTargetList.AddRange(targetEnemyData.Where(enemy => (enemy.HitPoint > 0) && IsHitRange(commandSelectPlayer, commandSelectPlayer.selectedSkill.Range, enemy)));
 
                                 commandTargetWindowDrawer.AddBattleCharacters(commandSelectPlayer.commandTargetList);
 
@@ -5430,7 +5782,7 @@ namespace Yukar.Battle
                                     case Rom.TargetType.PARTY_ONE_ENEMY_ALL:
                                         foreach (BattlePlayerData player in targetPlayerData)
                                         {
-                                            if (player.player.isAvailableItem(item))
+                                            if (player.player.isAvailableItem(item) && IsHitRange(commandSelectPlayer, item, player))
                                             {
                                                 commandSelectPlayer.commandTargetList.Add(player);
                                                 windowType = WindowType.CommandTargetPlayerListWindow;
@@ -5444,16 +5796,19 @@ namespace Yukar.Battle
                                     case Rom.TargetType.ENEMY_ONE:
                                     case Rom.TargetType.PARTY_ALL_ENEMY_ONE:
                                     case Rom.TargetType.OTHERS_ENEMY_ONE:
+                                    {
+                                        foreach (var monster in targetEnemyData.Where(enemy => enemy.HitPoint > 0))
                                         {
-                                            foreach (var monster in targetEnemyData.Where(enemy => enemy.HitPoint > 0))
+                                            if (IsHitRange(commandSelectPlayer, item, monster))
                                             {
                                                 commandSelectPlayer.commandTargetList.Add(monster);
-                                                windowType = WindowType.CommandTargetMonsterListWindow;
                                             }
-
-                                            commandTargetWindowDrawer.AddBattleCharacters(commandSelectPlayer.commandTargetList);
+                                            windowType = WindowType.CommandTargetMonsterListWindow;
                                         }
-                                        break;
+
+                                        commandTargetWindowDrawer.AddBattleCharacters(commandSelectPlayer.commandTargetList);
+                                    }
+                                    break;
 
                                     default:
                                         commandSelectPlayer.selectedBattleCommandType = BattleCommandType.Item;
@@ -5470,7 +5825,7 @@ namespace Yukar.Battle
                                     player.IsSelectDisabled = !player.player.isAvailableItem(item);
                                 }
 
-                                commandSelectPlayer.commandTargetList.AddRange(targetPlayerData);
+                                commandSelectPlayer.commandTargetList.AddRange(targetPlayerData.Where(target => IsHitRange(commandSelectPlayer, item, target)));
                                 commandTargetWindowDrawer.AddBattleCharacters(commandSelectPlayer.commandTargetList);
                             }
                         }
@@ -5520,6 +5875,76 @@ namespace Yukar.Battle
 
 
 
+                // 場所変え
+                // change place
+                case SelectBattleCommandState.Position_MakeTargetList:
+                {
+                    commandSelectPlayer.commandTargetList.Clear();
+                    commandTargetWindowDrawer.Clear();
+
+                    var windowType = WindowType.CommandTargetPlayerListWindow;
+
+                    // 順番が回ってきた時に解除されている可能性があるので、強制的にパーティの後ろに移動しているキャストがいても選択はさせる
+                    // There is a possibility that it will be canceled when the turn comes around, so even if there is a cast who is forcibly moving behind the party, it will be selected.
+                    foreach (var player in playerData)
+                    {
+                            if (gameSettings.usePositionBack)
+                            {
+                                player.IsSelectDisabled = player.IsBehindPartyCondition();
+                            }
+                            else
+                            {
+                                player.IsSelectDisabled = false;
+                            }
+                        }
+
+                    // 自分自身を外す
+                    // remove yourself
+                    commandSelectPlayer.commandTargetList.AddRange(targetPlayerData.Where(target => commandSelectPlayer != target));
+
+                    commandTargetWindowDrawer.AddBattleCharacters(commandSelectPlayer.commandTargetList);
+
+                    commandTargetWindowDrawer.ResetSelect(commandSelectPlayer);
+
+                    battleViewer.OpenWindow(windowType);
+                    battleCommandState = SelectBattleCommandState.Position_SelectTarget;
+                    battleViewer.SetDisplayMessage(gameSettings.glossary.battle_positiontarget, windowType);
+                }
+                break;
+
+                case SelectBattleCommandState.Position_SelectTarget:
+                {
+                    bool isDecide = commandTargetWindowDrawer.InputUpdate();
+
+                    if (commandTargetWindowDrawer.Count > 0)
+                    {
+                        commandTargetWindowDrawer.CurrentSelectCharacter.IsSelect = true;
+                    }
+
+                    if (Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.DECIDE, Input.GameState.MENU) || isDecide)
+                    {
+                        if (!(commandTargetWindowDrawer.CurrentSelectCharacter?.IsSelectDisabled ?? true))
+                        {
+                            Audio.PlaySound(owner.se.decide);
+                            commandTargetWindowDrawer.saveSelect();
+
+                            commandSelectPlayer.selectedBattleCommandType = BattleCommandType.Position;
+                            battleCommandState = SelectBattleCommandState.CommandEnd;
+
+                            break;
+                        }
+                    }
+                    else if (Input.KeyTest(Input.StateType.TRIGGER, Input.KeyStates.CANCEL, Input.GameState.MENU))
+                    {
+                        Audio.PlaySound(owner.se.cancel);
+
+                        battleViewer.ClearDisplayMessage();
+                        battleViewer.OpenWindow(WindowType.PlayerCommandWindow);
+
+                        battleCommandState = SelectBattleCommandState.CommandSelect;
+                    }
+                    break;
+                }
 
                 // 逃げる
                 // run away
@@ -5591,6 +6016,11 @@ namespace Yukar.Battle
                     Graphics.DrawFillRect(0, 0, Graphics.ScreenWidth, Graphics.ScreenHeight, fadeScreenColorTweener.CurrentValue.R, fadeScreenColorTweener.CurrentValue.G, fadeScreenColorTweener.CurrentValue.B, fadeScreenColorTweener.CurrentValue.A);
                     break;
 
+                case BattleState.ResultInit:
+                    DrawBackground();
+                    if (!owner.IsBattle2D)
+                        ((BattleViewer3D)battleViewer).DrawField(playerViewData, enemyMonsterViewData);
+                    break;
                 case BattleState.Result:
                     DrawBackground();
                     if (!owner.IsBattle2D)
@@ -5707,74 +6137,84 @@ namespace Yukar.Battle
             switch (battleResultState)
             {
                 case BattleResultState.Win:
+                {
+                    // 経験値とお金とアイテムを加える
+                    // Add experience points, money and items
+                    int totalMoney = 0;
+                    int totalExp = 0;
+                    var dropItems = new List<Rom.NItem>();
+
+                    if (itemRate > 0)
                     {
-                        // 経験値とお金とアイテムを加える
-                        // Add experience points, money and items
-                        int totalMoney = 0;
-                        int totalExp = 0;
-                        var dropItems = new List<Rom.NItem>();
-                        var itemRate = party.CalcConditionDropItemRate();
-                        var moneyRate = party.CalcConditionRewardRate();
+                        var defeatEnemyDatas = new List<BattleEnemyData>(enemyData.Count + stockEnemyData.Count);
 
-                        if (itemRate > 0)
+                        defeatEnemyDatas.AddRange(enemyData);
+                        defeatEnemyDatas.AddRange(stockEnemyData);
+
+                        foreach (var monsterData in enemyData)
                         {
-                            var defeatEnemyDatas = new List<BattleEnemyData>(enemyData.Count + stockEnemyData.Count);
 
-                            defeatEnemyDatas.AddRange(enemyData);
-                            defeatEnemyDatas.AddRange(stockEnemyData);
+                            var monster = monsterData.monster;
 
-                            foreach (var monsterData in enemyData)
+                            totalMoney += monsterData.RewardsGold * moneyRate / 100;
+                            totalExp += monsterData.RewardsExp;
+
+                            // アイテム抽選
+                            // Item lottery
+                            foreach (var dropItem in monster.dropItems)
                             {
-
-                                var monster = monsterData.monster;
-
-                                totalMoney += monsterData.RewardsGold * moneyRate / 100;
-                                totalExp += monsterData.RewardsExp;
-
-                                // アイテム抽選
-                                // Item lottery
-                                foreach (var dropItem in monster.dropItems)
+                                if (dropItem.item != Guid.Empty)
                                 {
-                                    if (dropItem.item != Guid.Empty)
-                                    {
-                                        var item = catalog.getItemFromGuid(dropItem.item) as Common.Rom.NItem;
+                                    var item = catalog.getItemFromGuid(dropItem.item) as Common.Rom.NItem;
 
-                                        if ((item != null) && (battleRandom.Next(100) < dropItem.percent * itemRate / 100))
+                                    if ((item != null) && (battleRandom.Next(100) < dropItem.percent * itemRate / 100))
+                                    {
+                                        if (item.useEnhance && (item.baseItem == null))
                                         {
-                                            dropItems.Add(item);
+                                            item = item.CreateEnhancedItem();
+
+                                            catalog.addEnhancedItem(item);
                                         }
+
+                                        if (catalog.getItemFromGuid<Rom.Event>(item.scriptOnNew) is Rom.Event ev)
+                                        {
+                                            battleEvents.AddEvent(ev, item);
+                                        }
+
+                                        dropItems.Add(item);
                                     }
                                 }
                             }
                         }
-
-                        resultViewer.SetResultData(playerData.ToArray(), totalExp, totalMoney, dropItems.ToArray(), party.ItemDict);
-
-                        this.rewards.GetExp = totalExp;
-                        this.rewards.DropMoney = totalMoney;
-                        this.rewards.DropItems = dropItems.ToArray();
-
-
-                        if (BattleResultWinEvents != null)
-                        {
-                            BattleResultWinEvents();
-                        }
                     }
 
-                    resultViewer.Start();
-                    ChangeBattleState(BattleState.Result);
-                    break;
+                    resultViewer.SetResultData(playerViewData.ToArray(), totalExp, totalMoney, dropItems.ToArray(), party.ItemDict);
+
+                    this.rewards.GetExp = totalExp;
+                    this.rewards.DropMoney = totalMoney;
+                    this.rewards.DropItems = dropItems.ToArray();
+
+
+                    if (BattleResultWinEvents != null)
+                    {
+                        BattleResultWinEvents();
+                    }
+                }
+
+                resultViewer.Start();
+                ChangeBattleState(BattleState.ResultInit);
+                break;
 
                 case BattleResultState.Lose_GameOver:
+                {
+                    if (BattleResultLoseGameOverEvents != null)
                     {
-                        if (BattleResultLoseGameOverEvents != null)
-                        {
-                            BattleResultLoseGameOverEvents();
-                        }
+                        BattleResultLoseGameOverEvents();
                     }
-                    BattleResult = BattleResultState.Lose_GameOver;
-                    ChangeBattleState(BattleState.SetFinishEffect);
-                    break;
+                }
+                BattleResult = BattleResultState.Lose_GameOver;
+                ChangeBattleState(BattleState.SetFinishEffect);
+                break;
 
                 case BattleResultState.Escape_ToTitle:
                     BattleResult = BattleResultState.Escape_ToTitle;
@@ -5818,10 +6258,24 @@ namespace Yukar.Battle
             gameData.hitpoint = battlePlayerData.HitPoint;
             gameData.magicpoint = battlePlayerData.MagicPoint;
 
+            // まずはすべて適用する
+            // apply all first
+            gameData.conditionInfoDic.Clear();
+            foreach (var e in battlePlayerData.conditionInfoDic)
+            {
+                gameData.conditionInfoDic.Add(e.Key, e.Value);
+            }
+            gameData.refreshConditionEffect();
+
+            // 報酬系データの計算
+            // Calculation of reward system data
+            gameData.conditionAddExpRateForResult = gameData.conditionAddExpRate;
+            itemRate = party.CalcConditionDropItemRate();
+            moneyRate = party.CalcConditionRewardRate();
+
             // バトル終了時に解除される状態の解除
             // Canceling the state that is canceled at the end of the battle
             gameData.conditionInfoDic.Clear();
-
             foreach (var e in battlePlayerData.conditionInfoDic)
             {
                 if ((e.Value.recovery & Hero.ConditionInfo.RecoveryType.BattleFinished) == 0)
@@ -5829,7 +6283,6 @@ namespace Yukar.Battle
                     gameData.conditionInfoDic.Add(e.Key, e.Value);
                 }
             }
-
             gameData.refreshConditionEffect();
         }
 
@@ -5873,7 +6326,7 @@ namespace Yukar.Battle
 
                         var targets = new List<BattleCharacterBase>();
 
-                        targets.AddRange(tempTargets);
+                        targets.AddRange(tempTargets.Where(enemy => IsHitRange(inCharacter, enemy)));
 
                         if (targets.Count > 0)
                         {
@@ -5888,9 +6341,59 @@ namespace Yukar.Battle
             return null;
         }
 
+        internal bool IsHitRange(BattleCharacterBase inCharacter, float inRange, BattleCharacterBase inTarget)
+        {
+            var gs = Catalog.sInstance.getGameSettings();
+
+            if (!gs.useRange || (inRange == 0))
+            {
+                return true;
+            }
+
+            float distance;
+
+            if (gs.checkRange == Rom.GameSettings.CheckRangeType.Line)
+            {
+                // Z行チェックの時の射程は１マス加算
+                // When checking the Z line, the range is added by 1 square.
+                inRange++;
+
+                distance = Math.Abs(inCharacter.moveTargetPos.Z - inTarget.moveTargetPos.Z);
+            }
+            else
+            {
+                inRange = inRange * inRange;
+
+                var diffX = inCharacter.moveTargetPos.X - inTarget.moveTargetPos.X;
+                var diffZ = inCharacter.moveTargetPos.Z - inTarget.moveTargetPos.Z;
+
+                distance = (diffX * diffX + diffZ * diffZ);
+            }
+
+            return (distance <= inRange);
+        }
+
+        internal bool IsHitRange(BattleCharacterBase inCharacter, BattleCharacterBase inTarget)
+        {
+            var hero = inCharacter.Hero;
+            var weapon = hero.equipments[Hero.WEAPON_INDEX];
+            var range = (weapon == null) ? hero.rom.range : weapon.range;
+
+            return IsHitRange(inCharacter, range, inTarget);
+        }
+
+        internal bool IsHitRange(BattleCharacterBase inCharacter, Common.Rom.NItem inItem, BattleCharacterBase inTarget)
+        {
+            return IsHitRange(inCharacter, inItem.range, inTarget);
+        }
 
         internal bool IsHit(BattleCharacterBase inCharacter, BattleCharacterBase inTarget)
         {
+            if (!IsHitRange(inCharacter, inTarget))
+            {
+                return false;
+            }
+
             return inCharacter.Dexterity * (100 - inTarget.Evasion) > battleRandom.Next(100 * 100);
         }
 
@@ -5916,8 +6419,8 @@ namespace Yukar.Battle
                         targets.Add(battleViewer.commandTargetSelector.CurrentSelectCharacter);
                     }
 
-					if (character.selectedBattleCommandType == BattleCommandType.Critical)
-					{
+                    if (character.selectedBattleCommandType == BattleCommandType.Critical)
+                    {
                         // 必中ではないクリティカルが攻撃に失敗したらミス
                         // If a critical attack fails, it is a miss.
                         character.selectedBattleCommandType = IsHit(character, targets[0]) ? BattleCommandType.ForceCritical : BattleCommandType.Miss;
@@ -5934,65 +6437,65 @@ namespace Yukar.Battle
                     break;
 
                 case BattleCommandType.SameSkillEffect:
+                {
+                    var skill = catalog.getItemFromGuid(character.selectedBattleCommand.refGuid) as Rom.NSkill;
+
+                    switch (skill.option.target)
                     {
-                        var skill = catalog.getItemFromGuid(character.selectedBattleCommand.refGuid) as Rom.NSkill;
+                        case Rom.TargetType.PARTY_ONE:
+                        case Rom.TargetType.ENEMY_ONE:
+                        case Rom.TargetType.PARTY_ONE_ENEMY_ALL:
+                        case Rom.TargetType.PARTY_ALL_ENEMY_ONE:
+                        case Rom.TargetType.SELF_ENEMY_ONE:
+                        case Rom.TargetType.OTHERS_ENEMY_ONE:
+                            targets.Add(battleViewer.commandTargetSelector.CurrentSelectCharacter);
+                            break;
+                        case Rom.TargetType.ALL:
+                            if (character.selectedSkill.friendEffect.HasDeadCondition(catalog) && character.selectedSkill.option.onlyForDown)
+                            {
+                                targets.AddRange(character.FriendPartyRefMember);
+                            }
+                            else
+                            {
+                                targets.AddRange(character.FriendPartyRefMember.Where(member => member.HitPoint > 0));
+                            }
+                            targets.AddRange(character.EnemyPartyRefMember.Where(enemy => enemy.HitPoint > 0));
+                            break;
 
-                        switch (skill.option.target)
-                        {
-                            case Rom.TargetType.PARTY_ONE:
-                            case Rom.TargetType.ENEMY_ONE:
-                            case Rom.TargetType.PARTY_ONE_ENEMY_ALL:
-                            case Rom.TargetType.PARTY_ALL_ENEMY_ONE:
-                            case Rom.TargetType.SELF_ENEMY_ONE:
-                            case Rom.TargetType.OTHERS_ENEMY_ONE:
-                                targets.Add(battleViewer.commandTargetSelector.CurrentSelectCharacter);
-                                break;
-                            case Rom.TargetType.ALL:
-                                if (character.selectedSkill.friendEffect.HasDeadCondition(catalog) && character.selectedSkill.option.onlyForDown)
-                                {
-                                    targets.AddRange(character.FriendPartyRefMember);
-                                }
-                                else
-                                {
-                                    targets.AddRange(character.FriendPartyRefMember.Where(member => member.HitPoint > 0));
-                                }
-                                targets.AddRange(character.EnemyPartyRefMember.Where(enemy => enemy.HitPoint > 0));
-                                break;
+                        case Rom.TargetType.PARTY_ALL:
+                            if (skill.friendEffect.HasDeadCondition(catalog) && skill.option.onlyForDown)
+                            {
+                                targets.AddRange(character.FriendPartyRefMember);
+                            }
+                            else
+                            {
+                                targets.AddRange(character.FriendPartyRefMember.Where(member => member.HitPoint > 0));
+                            }
+                            break;
 
-                            case Rom.TargetType.PARTY_ALL:
-                                if (skill.friendEffect.HasDeadCondition(catalog) && skill.option.onlyForDown)
-                                {
-                                    targets.AddRange(character.FriendPartyRefMember);
-                                }
-                                else
-                                {
-                                    targets.AddRange(character.FriendPartyRefMember.Where(member => member.HitPoint > 0));
-                                }
-                                break;
+                        case Rom.TargetType.ENEMY_ALL:
+                            targets.AddRange(character.EnemyPartyRefMember.Where(enemy => enemy.HitPoint > 0));
+                            break;
 
-                            case Rom.TargetType.ENEMY_ALL:
-                                targets.AddRange(character.EnemyPartyRefMember.Where(enemy => enemy.HitPoint > 0));
-                                break;
+                        case Rom.TargetType.SELF:
+                        case Rom.TargetType.SELF_ENEMY_ALL:
+                            targets.Add(character);
+                            break;
 
-                            case Rom.TargetType.SELF:
-                            case Rom.TargetType.SELF_ENEMY_ALL:
-                                targets.Add(character);
-                                break;
-
-                            case Rom.TargetType.OTHERS:
-                            case Rom.TargetType.OTHERS_ALL:
-                                if (skill.friendEffect.HasDeadCondition(catalog) && skill.option.onlyForDown)
-                                {
-                                    targets.AddRange(character.FriendPartyRefMember.Where(member => character != member));
-                                }
-                                else
-                                {
-                                    targets.AddRange(character.FriendPartyRefMember.Where(member => character != member && member.HitPoint > 0));
-                                }
-                                break;
-                        }
+                        case Rom.TargetType.OTHERS:
+                        case Rom.TargetType.OTHERS_ALL:
+                            if (skill.friendEffect.HasDeadCondition(catalog) && skill.option.onlyForDown)
+                            {
+                                targets.AddRange(character.FriendPartyRefMember.Where(member => character != member));
+                            }
+                            else
+                            {
+                                targets.AddRange(character.FriendPartyRefMember.Where(member => character != member && member.HitPoint > 0));
+                            }
+                            break;
                     }
-                    break;
+                }
+                break;
 
                 case BattleCommandType.Skill:
                     switch (character.selectedSkill.option.target)
@@ -6122,6 +6625,9 @@ namespace Yukar.Battle
                     }
                     break;
 
+                case BattleCommandType.Position:
+                    targets.Add(battleViewer.commandTargetSelector.CurrentSelectCharacter);
+                    break;
 
                 case BattleCommandType.Nothing:
                     //character.targetCharacter = new BattleCharacterBase[ 0 ];
@@ -6150,7 +6656,7 @@ namespace Yukar.Battle
                     }
                     foreach (var target in character.targetCharacter)
                     {
-                        if (IsNotActiveTarget(target) || target.IsDeadCondition() || character.EnemyPartyRefMember.Exists(x => x.HateCondition != 0))
+                        if (IsNotActiveTarget(target) || target.IsDeadCondition() || character.EnemyPartyRefMember.Exists(x => x.HateCondition != 0) || !IsHitRange(character, target))
                         {
                             isRetarget = true;
                             break;
@@ -6171,7 +6677,7 @@ namespace Yukar.Battle
                             case Rom.TargetType.OTHERS_ENEMY_ONE:
                                 if (skill.enemyEffect != null)
                                 {
-                                    if (IsNotActiveTarget(target) || target.IsDeadCondition())
+                                    if (IsNotActiveTarget(target) || target.IsDeadCondition() || !IsHitRange(character, skill.Range, target))
                                     {
                                         isRetarget = true;
                                     }
@@ -6182,7 +6688,7 @@ namespace Yukar.Battle
                             case Rom.TargetType.PARTY_ONE_ENEMY_ALL:
                                 if (skill.friendEffect != null)
                                 {
-                                    if (IsNotActiveTarget(target))
+                                    if (IsNotActiveTarget(target) || !IsHitRange(character, skill.Range, target))
                                     {
                                         isRetarget = true;
                                     }
@@ -6217,7 +6723,7 @@ namespace Yukar.Battle
                             case Rom.TargetType.OTHERS_ENEMY_ONE:
                                 if (skill.enemyEffect != null)
                                 {
-                                    if (IsNotActiveTarget(target) || target.IsDeadCondition() || character.EnemyPartyRefMember.Exists(x => x.HateCondition != 0))
+                                    if (IsNotActiveTarget(target) || target.IsDeadCondition() || character.EnemyPartyRefMember.Exists(x => x.HateCondition != 0) || !IsHitRange(character, skill.Range, target))
                                     {
                                         isRetarget = true;
                                     }
@@ -6228,13 +6734,14 @@ namespace Yukar.Battle
                             case Rom.TargetType.PARTY_ONE_ENEMY_ALL:
                                 if (skill.friendEffect != null)
                                 {
-                                    if (IsNotActiveTarget(target))
+                                    if (IsNotActiveTarget(target) || !IsHitRange(character, skill.Range, target))
                                     {
                                         isRetarget = true;
                                     }
                                     // 蘇生効果ありで対象が死んでいないか戦闘不能者のみの場合は無効
                                     // Invalid if there is a resurrection effect and the target is not dead or only incapacitated
-                                    else if (skill.friendEffect.HasDeadCondition(catalog)) {
+                                    else if (skill.friendEffect.HasDeadCondition(catalog))
+                                    {
                                         if (!target.IsDeadCondition() && skill.IsOnlyForDown(catalog))
                                             isRetarget = true;
                                     }
@@ -6262,7 +6769,7 @@ namespace Yukar.Battle
                                 {
                                     case Rom.TargetType.PARTY_ONE:
                                     case Rom.TargetType.PARTY_ONE_ENEMY_ALL:
-                                        if (IsNotActiveTarget(target) || target == null || (skill.friendEffect != null
+                                        if (IsNotActiveTarget(target) || target == null || !IsHitRange(character, skill.Range, target) || (skill.friendEffect != null
                                             && ((target.IsDeadCondition() != skill.friendEffect.HasDeadCondition(catalog)) && skill.IsOnlyForDown(catalog))))
                                         {
                                             isRetarget = true;
@@ -6272,7 +6779,7 @@ namespace Yukar.Battle
                                     case Rom.TargetType.ENEMY_ONE:
                                     case Rom.TargetType.PARTY_ALL_ENEMY_ONE:
                                     case Rom.TargetType.SELF_ENEMY_ONE:
-                                        if (IsNotActiveTarget(target) || target.IsDeadCondition())
+                                        if (IsNotActiveTarget(target) || target.IsDeadCondition() || !IsHitRange(character, skill.Range, target))
                                         {
                                             isRetarget = true;
                                         }
@@ -6287,6 +6794,16 @@ namespace Yukar.Battle
                                 isRetarget = true;
                             }
                         }
+                    }
+                    break;
+                case BattleCommandType.Position:
+                    if (character.targetCharacter.Length != 1)
+                    {
+                        isRetarget = true;
+                    }
+                    else if (gameSettings.useBehindParty)
+                    {
+                        isRetarget = character.targetCharacter[0].IsBehindPartyCondition() || character.IsBehindPartyCondition();
                     }
                     break;
             }
@@ -6315,24 +6832,24 @@ namespace Yukar.Battle
                 case BattleCommandType.Critical:
                 case BattleCommandType.ForceCritical:
                 case BattleCommandType.Miss:
+                {
+                    var attackConditionTarget = GetAttackConditionTargetCharacter(character);
+
+                    if (attackConditionTarget != null)
                     {
-                        var attackConditionTarget = GetAttackConditionTargetCharacter(character);
+                        targets.Add(attackConditionTarget);
+                    }
+                    else
+                    {
+                        var tempTargets = new List<BattleCharacterBase>(targetPartyMember.Where(enemy => IsHitRange(character, enemy)));
 
-                        if (attackConditionTarget != null)
+                        if (tempTargets.Count() > 0)
                         {
-                            targets.Add(attackConditionTarget);
-                        }
-                        else
-                        {
-                            var tempTargets = new List<BattleCharacterBase>(targetPartyMember);
-
-                            if (tempTargets.Count() > 0)
-                            {
-                                targets.Add(TargetSelectWithHateRate(tempTargets, character as BattleEnemyData));
-                            }
+                            targets.Add(TargetSelectWithHateRate(tempTargets, character as BattleEnemyData));
                         }
                     }
-                    break;
+                }
+                break;
 
                 // どちらも対象が自分自身なので再抽選の必要は無し
                 // In both cases, the target is yourself, so there is no need to re-lottery.
@@ -6342,25 +6859,26 @@ namespace Yukar.Battle
                     break;
 
                 case BattleCommandType.SameSkillEffect:
+                {
+                    var skill = catalog.getItemFromGuid(character.selectedBattleCommand.refGuid) as Rom.NSkill;
+
+                    switch (skill.option.target)
                     {
-                        var skill = catalog.getItemFromGuid(character.selectedBattleCommand.refGuid) as Rom.NSkill;
-
-                        switch (skill.option.target)
-                        {
-                            case Rom.TargetType.ENEMY_ONE:
-                            case Rom.TargetType.PARTY_ALL_ENEMY_ONE:
-                            case Rom.TargetType.SELF_ENEMY_ONE:
-                            case Rom.TargetType.OTHERS_ENEMY_ONE:
-                                if (targetPartyMember.Count() > 0) targets.Add(targetPartyMember.ElementAt(battleRandom.Next(targetPartyMember.Count())));
-                                break;
-                            case Rom.TargetType.PARTY_ONE:
-                            case Rom.TargetType.PARTY_ONE_ENEMY_ALL:
-                                if (friendPartyMember.Count() > 0) targets.Add(friendPartyMember.ElementAt(battleRandom.Next(friendPartyMember.Count())));
-                                break;
-                        }
-
+                        case Rom.TargetType.ENEMY_ONE:
+                        case Rom.TargetType.PARTY_ALL_ENEMY_ONE:
+                        case Rom.TargetType.SELF_ENEMY_ONE:
+                        case Rom.TargetType.OTHERS_ENEMY_ONE:
+                            if (targetPartyMember.Count() > 0) targets.Add(targetPartyMember.ElementAt(battleRandom.Next(targetPartyMember.Count())));
+                            break;
+                        case Rom.TargetType.PARTY_ONE:
+                        case Rom.TargetType.PARTY_ONE_ENEMY_ALL:
+                            if (friendPartyMember.Count() > 0) targets.Add(friendPartyMember.ElementAt(battleRandom.Next(friendPartyMember.Count())));
+                            break;
                     }
-                    break;
+
+                    targets.RemoveAll(x => !IsHitRange(character, skill.Range, x));
+                }
+                break;
 
                 case BattleCommandType.Skill:
                     switch (character.selectedSkill.option.target)
@@ -6377,6 +6895,7 @@ namespace Yukar.Battle
                             break;
                     }
 
+                    targets.RemoveAll(x => !IsHitRange(character, character.selectedSkill.Range, x));
                     break;
 
                 case BattleCommandType.Item:
@@ -6397,6 +6916,7 @@ namespace Yukar.Battle
                             if (a.Count() > 0) targets.Add(a.ElementAt(battleRandom.Next(a.Count())));
                         }
 
+                        targets.RemoveAll(x => !IsHitRange(character, character.selectedItem.item.Range, x));
                     }
                     else if (character.selectedItem.item.IsExpandableWithSkill)
                     {
@@ -6424,14 +6944,15 @@ namespace Yukar.Battle
                             case Rom.TargetType.ENEMY_ONE:
                             case Rom.TargetType.PARTY_ALL_ENEMY_ONE:
                             case Rom.TargetType.SELF_ENEMY_ONE:
-                                {
-                                    var a = character.EnemyPartyRefMember.Where(enemy => enemy.HitPoint > 0);
+                            {
+                                var a = character.EnemyPartyRefMember.Where(enemy => enemy.HitPoint > 0);
 
-                                    if (a.Count() > 0) targets.Add(a.ElementAt(battleRandom.Next(a.Count())));
-                                }
-                                break;
+                                if (a.Count() > 0) targets.Add(a.ElementAt(battleRandom.Next(a.Count())));
+                            }
+                            break;
                         }
 
+                        targets.RemoveAll(x => !IsHitRange(character, skill.Range, x));
                     }
                     break;
             }

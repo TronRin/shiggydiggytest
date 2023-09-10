@@ -1,4 +1,5 @@
-﻿using System;
+﻿#define ENABLE_TEST
+using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Yukar.Common;
@@ -38,6 +39,8 @@ namespace Yukar.Battle
 
         private BattleResultState reservedResult = BattleResultState.NonFinish;
         internal Vector3[] playerLayouts;
+        private bool isBattleEndEventStarted;
+        private bool isBattleForciblyTerminate;
 
         public override CameraManager CameraManager { get => (battle.battleViewer as BattleViewer3D)?.camManager; }
 
@@ -77,18 +80,27 @@ namespace Yukar.Battle
                 if (ev == null || !ev.IsValid())
                     continue;
 
-                var newEventRef = new Map.EventRef();
-                newEventRef.guId = guid;
-                newEventRef.pos.X =
-                newEventRef.pos.Z = -1;
-                var dummyChr = new MapCharacter(ev, newEventRef, this);
-                dummyChr.isCommonEvent = true;
-                checkAllSheet(dummyChr, true, true, false);
-                dummyChrs.Add(dummyChr);
+                AddEvent(ev);
             }
 
             memberChangeQueue.Clear();
             extras = null;
+            cameraControlMode = Map.CameraControlMode.NORMAL;
+        }
+
+        internal void AddEvent(Event inEvent, RomItem parentRom = null)
+		{
+            var newEventRef = new Map.EventRef();
+            newEventRef.guId = inEvent.guId;
+            newEventRef.pos.X =
+            newEventRef.pos.Z = -1;
+
+            var dummyChr = new MapCharacter(inEvent, newEventRef, this);
+
+            dummyChr.isCommonEvent = true;
+
+            checkAllSheet(dummyChr, true, true, false, parentRom);
+            dummyChrs.Add(dummyChr);
         }
 
         private void initBattleFieldPlacedEvents()
@@ -212,12 +224,12 @@ namespace Yukar.Battle
                 camManager.convQuaternionToRotation(qt, out rot);
 
                 hero.pos = new Vector3(camManager.m_intp_target.x, camManager.m_intp_target.y, camManager.m_intp_target.z);
-                xAngle = camManager.m_view_angle.x;
-                yAngle = camManager.m_view_angle.y;
-                dist = camManager.m_distance;
-                camOffset = camManager.m_last_offset;
-                fovy = camManager.m_fovy;
-                nearClip = camManager.m_nearClip;
+                //xAngle = camManager.m_view_angle.x;
+                //yAngle = camManager.m_view_angle.y;
+                //dist = camManager.m_distance;
+                //camOffset = camManager.m_last_offset;
+                //fovy = camManager.m_fovy;
+                //nearClip = camManager.m_nearClip;
 #endif
 
                 mapDrawer = viewer.mapDrawer;
@@ -402,6 +414,16 @@ namespace Yukar.Battle
 
         public void start(Script.Trigger trigger)
         {
+            if (trigger == Script.Trigger.BATTLE_END)
+            {
+                // BTL_STOP 命令で再突入する可能性があるので処理しないようにする
+                // Do not process the BTL_STOP instruction as it may re-enter
+                if (isBattleEndEventStarted)
+                    return;
+
+                isBattleEndEventStarted = true;
+            }
+
             foreach (var runner in runnerDic.getList().ToArray())
             {
                 if (runner.state == ScriptRunner.ScriptState.Running)
@@ -412,7 +434,7 @@ namespace Yukar.Battle
             }
         }
 
-        internal bool isBusy()
+        internal bool isBusy(bool gaugeUpdate = true)
         {
             if (battle == null)
                 return false;
@@ -420,17 +442,20 @@ namespace Yukar.Battle
             // ステータス変動によるゲージアニメをここでやってしまう
             // I will do a gauge animation by status change here
             bool isUpdated = false;
-            foreach (var player in battle.playerData)
+            if (gaugeUpdate)
             {
-                isUpdated |= battle.UpdateBattleStatusData(player);
-            }
-            foreach (var enemy in battle.enemyData)
-            {
-                isUpdated |= battle.UpdateBattleStatusData(enemy);
-            }
-            if (isUpdated)
-            {
-                battle.statusUpdateTweener.Update();
+                foreach (var player in battle.playerData)
+                {
+                    isUpdated |= battle.UpdateBattleStatusData(player);
+                }
+                foreach (var enemy in battle.enemyData)
+                {
+                    isUpdated |= battle.UpdateBattleStatusData(enemy);
+                }
+                if (isUpdated)
+                {
+                    battle.statusUpdateTweener.Update();
+                }
             }
 
             // メンバーチェンジを処理する
@@ -452,9 +477,11 @@ namespace Yukar.Battle
                 actionQueue.Clear();
             }
 
+            var isResultInit = battle.battleState == BattleState.ResultInit;
+
             foreach (var runner in runnerDic.getList())
             {
-                if (!runner.isParallelTriggers() &&
+                if ((!runner.isParallelTriggers() || (isResultInit && runner.isEffectTriggers())) &&
                     runner.state == ScriptRunner.ScriptState.Running)
                 {
                     return true;
@@ -812,7 +839,7 @@ namespace Yukar.Battle
             return true;
         }
 
-        internal void checkAllSheet(MapCharacter mapChr, bool inInitialize, bool applyScript, bool applyGraphic)
+        internal void checkAllSheet(MapCharacter mapChr, bool inInitialize, bool applyScript, bool applyGraphic, RomItem parentRom = null)
         {
             var data = owner.data;
             var rom = mapChr.rom;
@@ -936,7 +963,7 @@ namespace Yukar.Battle
                             mapChr.expand = script.expandArea;
                             if (script.commands.Count > 0)
                             {
-                                var runner = new ScriptRunner(this, mapChr, script, scriptId);
+                                var runner = new ScriptRunner(this, mapChr, script, scriptId, parentRom);
 
                                 // 自動的に開始(並列)が removeOnExit状態で残っている可能性があるので、関係ないGUIDに差し替える
                                 // Automatically start (parallel) may remain in the removeOnExit state, so replace it with an unrelated GUID
@@ -959,7 +986,8 @@ namespace Yukar.Battle
                                     script.trigger == Common.Rom.Script.Trigger.PARALLEL ||
                                     script.trigger == Common.Rom.Script.Trigger.PARALLEL_MV ||
                                     script.trigger == Common.Rom.Script.Trigger.AUTO_PARALLEL ||
-                                    script.trigger == Common.Rom.Script.Trigger.BATTLE_PARALLEL)
+                                    script.trigger == Common.Rom.Script.Trigger.BATTLE_PARALLEL ||
+                                    script.trigger == Common.Rom.Script.Trigger.GETITEM)
                                     runner.Run();
                             }
                         }
@@ -1225,6 +1253,11 @@ namespace Yukar.Battle
 
         private BattleCharacterBase getTargetData(Script.Command rom, ref int cur, Guid evGuid)
         {
+            // ターゲット指定がない場合がある
+            // Sometimes there is no target designation
+            if (rom.attrList.Count <= cur)
+                return null;
+
             BattleCharacterBase result = null;
             switch (rom.attrList[cur++].GetInt())
             {
@@ -1422,6 +1455,10 @@ namespace Yukar.Battle
 
         public override void battleStop()
         {
+            if (isBattleForciblyTerminate)
+                return;
+
+            isBattleForciblyTerminate = true;
             battle.battleState = BattleState.StopByEvent;
             ((BattleViewer3D)battle.battleViewer).camManager.setWaitFunc(null);
         }
@@ -1759,6 +1796,39 @@ namespace Yukar.Battle
             return battleStatus.monster.guId;
         }
 
+        internal void setLastSkillUserIndex(BattleCharacterBase user)
+        {
+            var index = 0;
+
+            foreach (var pl in battle.playerData)
+            {
+                if (pl == user)
+                {
+                    lastSkillUseCampType = CampType.Party;
+                    lastSkillUserIndex = index;
+
+                    return;
+                }
+
+                index++;
+            }
+
+            index = 0;
+
+            foreach (var pl in battle.enemyData)
+            {
+                if (pl == user)
+                {
+                    lastSkillUseCampType = CampType.Enemy;
+                    lastSkillUserIndex = index;
+
+                    return;
+                }
+
+                index++;
+            }
+        }
+
         internal void setLastSkillTargetIndex(BattleCharacterBase[] friendEffectTargets, BattleCharacterBase[] enemyEffectTargets)
         {
             if (friendEffectTargets.Length > 0)
@@ -1880,6 +1950,15 @@ namespace Yukar.Battle
                     lastBattleResult = 3;
                     break;
             }
+        }
+
+        public override void StopCameraAnimation()
+        {
+            var viewer = battle.battleViewer as BattleViewer3D;
+            if (viewer == null)
+                return;
+
+            viewer.StopCameraAnimation();
         }
     }
 }

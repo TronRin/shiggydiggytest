@@ -98,10 +98,10 @@ namespace Yukar.Battle
                 #region BATTLEENEMY
                 case GameContentParser.ContentType.ENEMYNAME:
                 {
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     if (heros != null && heros.Count > index)
                     {
-                        var partyName = battle.enemyData[index].Name;
+                        var partyName = battle.EnemyViewDataList[index].Name;
                         return partyName;
                     }
                     else
@@ -111,11 +111,12 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.ENEMYSTATUS_A:
                 {
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
 
                     if (heros != null && heros.Count > index)
                     {
                         var hero = heros[index];
+                        var rewardsRate = Catalog.sInstance.getGameSettings().useLevelDependenceOfBattleRewards ? hero.monsterGameData.level : 1;
                         var status = new int[] {
                             hero.monsterGameData.level,
                             hero.MaxHitPoint,
@@ -126,15 +127,15 @@ namespace Yukar.Battle
                             hero.VitalityBase,
                             hero.Magic,
                             hero.Speed,
-                            hero.monster.exp,
-                            Common.GameData.Party.GetExp(hero.monster.levelGrowthRate, hero.monsterGameData.level - 1) - hero.monsterGameData.exp,
+                            hero.monster.exp * rewardsRate,
+                            hero.monster.levelUpExpList[hero.monsterGameData.level - 1] - hero.monsterGameData.exp,
                             hero.Attack,
                             hero.ElementAttack,
                             hero.Defense,
                             Math.Min(100, hero.Dexterity),
                             Math.Min(100, hero.Evasion),
                             Math.Min(100, hero.Critical),
-                            hero.monster.money};
+                            hero.monster.money * rewardsRate};
 
                         // LV99のときは数値を返さない
                         // Does not return a number when LV99
@@ -151,7 +152,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.ENEMYIMAGE:
                 {
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     if (heros.Count > index)
                     {
                         owner.SetPartyImageThumbnail(result, heros[index].monster);
@@ -161,7 +162,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.ENEMYIMAGEICON:
                 {
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     if (heros.Count > index)
                     {
                         var hero = heros[index];
@@ -173,7 +174,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.ENEMYGRAPHIC:
                 {
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     if (heros.Count > index)
                     {
                         owner.SetPartyThumbnail(result, heros[index].monster);
@@ -183,7 +184,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.ENEMYCONDITION_A:
                 {
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     if (heros != null && heros.Count > index)
                     {
                         var hero = heros[index];
@@ -208,7 +209,7 @@ namespace Yukar.Battle
                 break;
                 case GameContentParser.ContentType.ENEMYCONDITION:
                 {
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     if (heros.Count > index)
                     {
                         var hero = heros[index];
@@ -233,7 +234,7 @@ namespace Yukar.Battle
                 break;
                 case GameContentParser.ContentType.ENEMYCONDITIONICON_A:
                 {
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     var partyIndex = index;
                     if (heros != null && heros.Count > partyIndex)
                     {
@@ -245,7 +246,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.ENEMYCONDITIONICON:
                 {
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     index = Math.Min(index, heros.Count - 1);
                     index = Math.Max(0, index);
                     if (heros != null && heros.Count > index)
@@ -260,7 +261,7 @@ namespace Yukar.Battle
                 case GameContentParser.ContentType.ENEMYSUBCLASSICON:
                 {
                     var isSubClass = content.type == GameContentParser.ContentType.ENEMYSUBCLASSICON;
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     if (heros.Count > index)
                     {
                         var hero = heros[index];
@@ -273,7 +274,7 @@ namespace Yukar.Battle
                 case GameContentParser.ContentType.ENEMYSUBCLASSLEVEL:
                 {
                     var isSubClass = content.type == GameContentParser.ContentType.ENEMYSUBCLASSLEVEL;
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
 
                     if (heros.Count > index)
                     {
@@ -293,7 +294,7 @@ namespace Yukar.Battle
                 case GameContentParser.ContentType.ENEMYSUBCLASS:
                 {
                     var isSubClass = content.type == GameContentParser.ContentType.ENEMYSUBCLASS;
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     if (heros.Count > index)
                     {
                         var hero = heros[index].monsterGameData;
@@ -304,7 +305,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.ENEMYATTRIBUTEICON:
                 {
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     if (heros.Count > index)
                     {
                         var hero = heros[index];
@@ -317,7 +318,7 @@ namespace Yukar.Battle
                 case GameContentParser.ContentType.ENEMYRESISTANCEICON_A:
                 {
 
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     if (heros.Count > index)
                     {
                         var hero = heros[index];
@@ -332,7 +333,7 @@ namespace Yukar.Battle
                 case GameContentParser.ContentType.ENEMYRESISTANCE_A:
                 {
 
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     if (heros.Count > index)
                     {
                         var hero = heros[index];
@@ -342,7 +343,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.ENEMYEXTRAPARAM_A_A:
                 {
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     var partyIndex = content.attrs[0];
 
                     if (heros.Count > partyIndex && content.options.Count > 1)
@@ -354,7 +355,7 @@ namespace Yukar.Battle
                 case GameContentParser.ContentType.ENEMYEXTRAPARAM_A:
                 {
 
-                    var heros = battle.enemyData;
+                    var heros = battle.EnemyViewDataList;
                     if (heros.Count > index)
                     {
                         return owner.GetHeroExtraParameter(heros[index].monsterGameData, content.option);
@@ -665,11 +666,11 @@ namespace Yukar.Battle
                 #region BATTLEPARTY
                 case GameContentParser.ContentType.PARTYNAME_A:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     var partyIndex = content.attrs[0];
                     if (heros != null && heros.Count > partyIndex)
                     {
-                        var partyName = battle.playerData[partyIndex].Name;
+                        var partyName = battle.PlayerViewDataList[partyIndex].Name;
                         result.HasPartyElement = true;
                         return partyName;
                     }
@@ -680,10 +681,10 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.PARTYNAME:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     if (heros != null && heros.Count > index)
                     {
-                        var partyName = battle.playerData[index].Name;
+                        var partyName = battle.PlayerViewDataList[index].Name;
                         result.HasPartyElement = true;
                         return partyName;
                     }
@@ -712,7 +713,7 @@ namespace Yukar.Battle
                     }
                     else
                     {
-                        var heros = battle.playerData;
+                        var heros = battle.PlayerViewDataList;
                         var partyIndex = content.attrs[0];
 
                         if (heros.Count > partyIndex)
@@ -744,7 +745,7 @@ namespace Yukar.Battle
                     }
                     else
                     {
-                        var heros = battle.playerData;
+                        var heros = battle.PlayerViewDataList;
                         if (heros.Count > index)
                         {
                             owner.SetPartyImageThumbnail(result, heros[index].player.rom);
@@ -778,7 +779,7 @@ namespace Yukar.Battle
                     }
                     else
                     {
-                        var heros = battle.playerData;
+                        var heros = battle.PlayerViewDataList;
                         var partyIndex = content.attrs[0];
 
                         if (heros.Count > partyIndex)
@@ -813,7 +814,7 @@ namespace Yukar.Battle
                     }
                     else
                     {
-                        var heros = battle.playerData;
+                        var heros = battle.PlayerViewDataList;
                         if (heros.Count > index)
                         {
                             owner.SetPartyIconThumbnail(result, heros[index].player.rom);
@@ -844,7 +845,7 @@ namespace Yukar.Battle
                     }
                     else
                     {
-                        var heros = battle.playerData;
+                        var heros = battle.PlayerViewDataList;
                         var partyIndex = content.attrs[0];
 
                         if (heros.Count > partyIndex)
@@ -876,7 +877,7 @@ namespace Yukar.Battle
                     }
                     else
                     {
-                        var heros = battle.playerData;
+                        var heros = battle.PlayerViewDataList;
                         if (heros.Count > index)
                         {
                             owner.SetPartyThumbnail(result, heros[index].player.rom);
@@ -889,7 +890,7 @@ namespace Yukar.Battle
                 break;
                 case GameContentParser.ContentType.PARTYSTATUS_A_A:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     var partyIndex = content.attrs[0];
                     if (heros != null && partyIndex > -1 && heros.Count > partyIndex)
                     {
@@ -905,7 +906,7 @@ namespace Yukar.Battle
                                 hero.Magic,
                                 hero.Speed,
                                 hero.player.exp,
-                                Common.GameData.Party.GetExp(hero.player.rom.levelGrowthRate, hero.player.level - 1) - hero.player.exp,
+                                hero.player.rom.levelUpExpList[hero.player.level - 1] - hero.player.exp,
                                 hero.Attack,
                                 hero.ElementAttack,
                                 hero.Defense,
@@ -938,7 +939,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.PARTYSTATUS_A:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
 
                     if (heros.Count > index)
                     {
@@ -954,7 +955,7 @@ namespace Yukar.Battle
                             hero.Magic,
                             hero.Speed,
                             hero.player.exp,
-                            Common.GameData.Party.GetExp(hero.player.rom.levelGrowthRate, hero.player.level - 1) - hero.player.exp,
+                            hero.player.rom.levelUpExpList[hero.player.level - 1] - hero.player.exp,
                             hero.Attack,
                             hero.ElementAttack,
                             hero.Defense,
@@ -985,7 +986,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.PARTYCONDITION_A_A:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     var partyIndex = content.attrs[0];
                     if (heros != null && heros.Count > partyIndex)
                     {
@@ -1012,7 +1013,7 @@ namespace Yukar.Battle
                 break;
                 case GameContentParser.ContentType.PARTYCONDITION_A:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     var partyIndex = index;
                     if (heros != null && heros.Count > partyIndex)
                     {
@@ -1039,7 +1040,7 @@ namespace Yukar.Battle
                 break;
                 case GameContentParser.ContentType.PARTYCONDITION:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     index = Math.Min(index, heros.Count - 1);
                     index = Math.Max(0, index);
 
@@ -1068,7 +1069,7 @@ namespace Yukar.Battle
                 break;
                 case GameContentParser.ContentType.PARTYCONDITIONICON_A_A:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     var partyIndex = content.attrs[0];
                     if (heros != null && heros.Count > partyIndex)
                     {
@@ -1082,7 +1083,7 @@ namespace Yukar.Battle
 
                 case GameContentParser.ContentType.PARTYCONDITIONICON_A:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     var partyIndex = index;
                     if (heros != null && heros.Count > partyIndex)
                     {
@@ -1095,7 +1096,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.PARTYCONDITIONICON:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     index = Math.Min(index, heros.Count - 1);
                     index = Math.Max(0, index);
                     if (heros != null && heros.Count > index)
@@ -1112,7 +1113,7 @@ namespace Yukar.Battle
                 {
                     var isSubClass = content.type == GameContentParser.ContentType.PARTYSUBCLASS_A;
 
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     var partyIndex = content.attrs[0];
                     if (heros.Count > partyIndex)
                     {
@@ -1132,7 +1133,7 @@ namespace Yukar.Battle
                 {
                     var isSubClass = content.type == GameContentParser.ContentType.PARTYSUBCLASS;
 
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     if (heros.Count > index)
                     {
                         result.HasPartyElement = true;
@@ -1148,7 +1149,7 @@ namespace Yukar.Battle
                 {
                     var isSubClass = content.type == GameContentParser.ContentType.PARTYSUBCLASSLEVEL_A;
 
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     var partyIndex = content.attrs[0];
 
                     if (heros.Count > partyIndex)
@@ -1172,7 +1173,7 @@ namespace Yukar.Battle
                 {
                     var isSubClass = content.type == GameContentParser.ContentType.PARTYSUBCLASSLEVEL;
 
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
 
                     if (heros.Count > index)
                     {
@@ -1194,7 +1195,7 @@ namespace Yukar.Battle
                 {
                     var isSubClass = content.type == GameContentParser.ContentType.PARTYSUBCLASSICON_A;
 
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     var partyIndex = content.attrs[0];
                     if (heros.Count > partyIndex)
                     {
@@ -1212,7 +1213,7 @@ namespace Yukar.Battle
                 case GameContentParser.ContentType.PARTYSUBCLASSICON:
                 {
                     var isSubClass = content.type == GameContentParser.ContentType.PARTYSUBCLASSICON;
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     if (heros.Count > index)
                     {
                         var hero = heros[index].Hero;
@@ -1226,7 +1227,7 @@ namespace Yukar.Battle
                 break;
                 case GameContentParser.ContentType.PARTYATTRIBUTEICON_A:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     var partyIndex = content.attrs[0];
                     if (heros != null && heros.Count > partyIndex)
                     {
@@ -1239,7 +1240,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.PARTYATTRIBUTEICON:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     index = Math.Min(index, heros.Count - 1);
                     index = Math.Max(0, index);
                     if (heros != null && heros.Count > index)
@@ -1253,7 +1254,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.PARTYRESISTANCEICON_A_A:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     var partyIndex = content.attrs[0];
                     if (heros != null && heros.Count > partyIndex)
                     {
@@ -1266,7 +1267,7 @@ namespace Yukar.Battle
                 }
                 case GameContentParser.ContentType.PARTYRESISTANCEICON_A:
                 {
-                    var heros = battle.playerData;
+                    var heros = battle.PlayerViewDataList;
                     var partyIndex = index;
                     if (heros != null && heros.Count > partyIndex)
                     {
@@ -1495,8 +1496,8 @@ namespace Yukar.Battle
                 return false;
             if (gameMain?.mapScene?.isBattle ?? false)
             {
-                var heros = battle.playerData;
-                var enemies = battle.enemyData;
+                var heros = battle.PlayerViewDataList;
+                var enemies = battle.EnemyViewDataList;
                 var index = 0;
                 owner.ShouldDrawVariableSlider = true;
                 if (content.attrs.Count > 0)

@@ -284,6 +284,9 @@ namespace Yukar.Battle
 
         public void ReleaseResourceData()
         {
+            if (resultWindowDrawer == null)
+                return;
+
             Graphics.UnloadImage(resultWindowDrawer.WindowResource);
             Graphics.UnloadImage(resultButtonDrawer.WindowResource);
             Graphics.UnloadImage(resultCursolDrawer.WindowResource);
@@ -310,13 +313,13 @@ namespace Yukar.Battle
 
             foreach (var player in partyPlayer)
             {
-                var addExp = exp * (100 + player.player.conditionAddExpRate) / 100;
+                var addExp = exp * (100 + player.player.conditionAddExpRateForResult) / 100;
                 var data = new CharacterLevelUpData();
 
                 data.player = player;
-                data.expRate = 100 + player.player.conditionAddExpRate;
+                data.expRate = 100 + player.player.conditionAddExpRateForResult;
 
-                data.castLevelUpData.levelGrowthRate = player.player.rom.levelGrowthRate;
+                data.castLevelUpData.levelUpExpList = player.player.rom.levelUpExpList;
                 data.castLevelUpData.startLevel = player.player.level;
                 data.castLevelUpData.addExp = addExp;
                 data.castLevelUpData.baseExp =
@@ -331,7 +334,7 @@ namespace Yukar.Battle
                 }
                 else
                 {
-                    data.jobLevelUpData.levelGrowthRate = jobCast.rom.levelGrowthRate;
+                    data.jobLevelUpData.levelUpExpList = jobCast.rom.levelUpExpList;
                     data.jobLevelUpData.startLevel = jobCast.level;
                     data.jobLevelUpData.upLevel = 0;
                     data.jobLevelUpData.addExp = Common.Rom.GameSettings.CalcExp(addExp, gameSettings.JobExpFormulaWords);
@@ -347,7 +350,7 @@ namespace Yukar.Battle
                 }
                 else
                 {
-                    data.sideJobLevelUpData.levelGrowthRate = jobCast.rom.levelGrowthRate;
+                    data.sideJobLevelUpData.levelUpExpList = jobCast.rom.levelUpExpList;
                     data.sideJobLevelUpData.startLevel = jobCast.level;
                     data.sideJobLevelUpData.upLevel = 0;
                     data.sideJobLevelUpData.addExp = Common.Rom.GameSettings.CalcExp(addExp, gameSettings.SideJobExpFormulaWords);
@@ -521,7 +524,7 @@ namespace Yukar.Battle
                             // Add normally if there is space
                             else
                             {
-                                owner.data.party.AddItem(dropItem.Key.guId, dropItem.Value);
+                                owner.data.party.AddItem(dropItem.Key.guId, dropItem.Value, true);
                             }
 
                             processedDropItemIndex++;
